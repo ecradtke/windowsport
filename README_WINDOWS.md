@@ -60,6 +60,7 @@ The Windows CLI provides the same management capabilities as Linux:
 | `.\scripts\windows\k13ctl.ps1 check-hardware` | Verify Intel Arc GPU (XPU) and NPU in PyTorch |
 | `.\scripts\windows\k13ctl.ps1 logs openvino` | Stream live logs for model switching & generation |
 | `.\scripts\windows\k13ctl.ps1 fix-transformers` | Ensure `transformers<=4.44.2` compatibility |
+| `.\scripts\windows\k13ctl.ps1 install-qdrant-ui` | Download & install Qdrant Web GUI Dashboard |
 | `.\scripts\windows\k13ctl.ps1 test` | Run embedding and chat inference smoke tests |
 
 ---

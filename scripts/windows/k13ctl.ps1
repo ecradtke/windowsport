@@ -133,7 +133,7 @@ switch ($Command.ToLower()) {
         # Qdrant probe
         try {
             $qRes = Invoke-RestMethod -Uri "http://127.0.0.1:6333/healthz" -TimeoutSec 3 -ErrorAction Stop
-            Write-Host "Qdrant    : [OK] HTTP 200 OK (Vector DB responsive)" -ForegroundColor Green
+            Write-Host "Qdrant    : [OK] HTTP 200 OK -> http://localhost:6333/dashboard" -ForegroundColor Green
         } catch {
             Write-Host "Qdrant    : [-] Not responding (http://127.0.0.1:6333)" -ForegroundColor Red
         }
@@ -240,7 +240,40 @@ switch ($Command.ToLower()) {
         }
     }
 
+    "install-qdrant-ui" {
+        $StaticDir = Join-Path $BaseDir "bin\qdrant\static"
+        Write-Host "[*] Downloading Qdrant Web Dashboard (Web GUI)..." -ForegroundColor Yellow
+        $TmpUiZip = Join-Path $env:TEMP "qdrant_ui.zip"
+        $UiReleaseUrl = "https://github.com/qdrant/qdrant-web-ui/releases/latest/download/dist-qdrant.zip"
+        try {
+            [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+            Invoke-WebRequest -Uri $UiReleaseUrl -OutFile $TmpUiZip -UseBasicParsing
+            $TmpExtractDir = Join-Path $env:TEMP "qdrant_ui_extracted"
+            if (Test-Path $TmpExtractDir) { Remove-Item $TmpExtractDir -Recurse -Force -ErrorAction SilentlyContinue }
+            Expand-Archive -Path $TmpUiZip -DestinationPath $TmpExtractDir -Force
+
+            if (-not (Test-Path $StaticDir)) {
+                New-Item -ItemType Directory -Path $StaticDir -Force | Out-Null
+            }
+
+            $DistSubDir = Join-Path $TmpExtractDir "dist"
+            if (Test-Path $DistSubDir) {
+                Copy-Item -Path "$DistSubDir\*" -Destination $StaticDir -Recurse -Force
+            } else {
+                Copy-Item -Path "$TmpExtractDir\*" -Destination $StaticDir -Recurse -Force
+            }
+
+            Remove-Item $TmpUiZip -Force -ErrorAction SilentlyContinue
+            Remove-Item $TmpExtractDir -Recurse -Force -ErrorAction SilentlyContinue
+            Write-Host "[OK] Qdrant Web Dashboard installed at $StaticDir" -ForegroundColor Green
+            Write-Host "Restarting Qdrant service..." -ForegroundColor Cyan
+            & $PSCommandPath restart qdrant
+        } catch {
+            Write-Host "[-] Could not download Qdrant Web Dashboard: $_" -ForegroundColor Red
+        }
+    }
+
     default {
-        Write-Host "Usage: .\k13ctl.ps1 {status|start|stop|restart|logs|check-hardware|fix-transformers|test} [target]" -ForegroundColor Yellow
+        Write-Host "Usage: .\k13ctl.ps1 {status|start|stop|restart|logs|check-hardware|fix-transformers|install-qdrant-ui|test} [target]" -ForegroundColor Yellow
     }
 }

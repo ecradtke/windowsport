@@ -150,6 +150,41 @@ if (-not $SkipQdrant) {
     } else {
         Write-Host "[OK] Qdrant binary already present: $QdrantExe" -ForegroundColor Green
     }
+
+    # Download and install Qdrant Web Dashboard (GUI)
+    $StaticDir = Join-Path $BaseDir "bin\qdrant\static"
+    $IndexHtml = Join-Path $StaticDir "index.html"
+    if (-not (Test-Path $IndexHtml)) {
+        Write-Host "[*] Downloading Qdrant Web Dashboard (Web GUI)..." -ForegroundColor Yellow
+        $TmpUiZip = Join-Path $env:TEMP "qdrant_ui.zip"
+        $UiReleaseUrl = "https://github.com/qdrant/qdrant-web-ui/releases/latest/download/dist-qdrant.zip"
+        try {
+            [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+            Invoke-WebRequest -Uri $UiReleaseUrl -OutFile $TmpUiZip -UseBasicParsing
+            $TmpExtractDir = Join-Path $env:TEMP "qdrant_ui_extracted"
+            if (Test-Path $TmpExtractDir) { Remove-Item $TmpExtractDir -Recurse -Force -ErrorAction SilentlyContinue }
+            Expand-Archive -Path $TmpUiZip -DestinationPath $TmpExtractDir -Force
+
+            if (-not (Test-Path $StaticDir)) {
+                New-Item -ItemType Directory -Path $StaticDir -Force | Out-Null
+            }
+
+            $DistSubDir = Join-Path $TmpExtractDir "dist"
+            if (Test-Path $DistSubDir) {
+                Copy-Item -Path "$DistSubDir\*" -Destination $StaticDir -Recurse -Force
+            } else {
+                Copy-Item -Path "$TmpExtractDir\*" -Destination $StaticDir -Recurse -Force
+            }
+
+            Remove-Item $TmpUiZip -Force -ErrorAction SilentlyContinue
+            Remove-Item $TmpExtractDir -Recurse -Force -ErrorAction SilentlyContinue
+            Write-Host "[OK] Qdrant Web Dashboard installed at $StaticDir" -ForegroundColor Green
+        } catch {
+            Write-Host "[-] Could not download Qdrant Web Dashboard: $_" -ForegroundColor Yellow
+        }
+    } else {
+        Write-Host "[OK] Qdrant Web Dashboard already present: $StaticDir" -ForegroundColor Green
+    }
 }
 
 # 6. Install Node.js packages and build React portal
