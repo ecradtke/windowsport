@@ -113,36 +113,15 @@ export class K13Client {
   }
 
   /**
-   * Ensure the active Qdrant collection exists and trigger a full RSS embedding rebuild if missing
+   * Trigger backend RSS sync to create the missing collection (cleaning any orphaned storage) and run a full embedding rebuild
    */
   private async ensureCollectionAndTriggerRebuild(): Promise<boolean> {
-    const col = this.config.activeCollection || 'rss_articles';
-    const dims = (this.config.currentEmbedModel || '').toLowerCase().includes('small') ? 384 : 768;
     try {
-      const createRes = await this.qdrantFetch(`/collections/${col}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ vectors: { size: dims, distance: 'Cosine' } }),
-        signal: AbortSignal.timeout(8000)
-      });
-      if (createRes.ok) {
-        for (const field of ['published_at', 'feed', 'group', 'url']) {
-          const schema = field === 'published_at' ? 'integer' : 'keyword';
-          await this.qdrantFetch(`/collections/${col}/index?wait=true`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ field_name: field, field_schema: schema }),
-            signal: AbortSignal.timeout(5000)
-          }).catch(() => {});
-        }
-        // Trigger background full embedding rebuild via Vite middleware
-        fetch('/api/rss/rebuild', { method: 'POST' }).catch(() => {});
-        return true;
-      }
+      const res = await fetch('/api/rss/rebuild', { method: 'POST' });
+      return res.ok;
     } catch {
-      // Ignore creation errors if Qdrant itself is offline
+      return false;
     }
-    return false;
   }
 
   /**

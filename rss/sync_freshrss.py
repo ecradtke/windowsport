@@ -711,11 +711,41 @@ def qdrant_get_collection_status_rest() -> Tuple[bool, int, int]:
         return False, 0, 0
 
 
+def _cleanup_orphaned_qdrant_dir(err_text: str = ""):
+    """Remove orphaned collection directory on Windows when Qdrant reports 'Collection data already exists at ...'."""
+    import shutil
+    candidates = []
+    # 1. Extract exact path reported by Qdrant error message if present
+    m = re.search(r"already exists at ([^\"]+)", err_text or "")
+    if m:
+        reported_path = m.group(1).strip().replace("\\\\", "\\")
+        candidates.append(reported_path)
+
+    # 2. Standard local Qdrant storage paths
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    data_root = os.environ.get("K13_DATA_DIR") or os.path.join(base_dir, "data")
+    storage_root = os.environ.get("QDRANT_STORAGE_DIR") or os.path.join(data_root, "qdrant", "storage")
+    candidates.append(os.path.join(storage_root, "collections", QDRANT_COLLECTION))
+    candidates.append(os.path.join(base_dir, "data", "qdrant", "storage", "collections", QDRANT_COLLECTION))
+
+    for folder in candidates:
+        if folder and os.path.isdir(folder):
+            logger.warning(f"Removing orphaned Qdrant collection directory on disk: {folder}")
+            try:
+                shutil.rmtree(folder)
+            except Exception as rm_err:
+                logger.warning(f"rmtree on {folder} partially failed ({rm_err}); renaming orphaned directory...")
+                try:
+                    os.rename(folder, f"{folder}.orphan_{int(time.time())}")
+                except Exception:
+                    shutil.rmtree(folder, ignore_errors=True)
+
+
 def qdrant_recreate_collection_rest() -> bool:
     """Create (or recreate) Qdrant collection and payload indexes via direct REST API."""
     base = QDRANT_URL.rstrip("/")
     try:
-        requests.delete(f"{base}/collections/{QDRANT_COLLECTION}", timeout=10)
+        requests.delete(f"{base}/collections/{QDRANT_COLLECTION}?wait=true", timeout=10)
     except Exception:
         pass
 
@@ -726,7 +756,22 @@ def qdrant_recreate_collection_rest() -> bool:
         timeout=15,
     )
     if r.status_code not in (200, 201):
-        raise RuntimeError(f"Failed creating collection '{QDRANT_COLLECTION}': HTTP {r.status_code} {r.text}")
+        if "already exists" in r.text.lower():
+            # Check if collection is actually active in Qdrant now (created by another process)
+            exists_now, vec_now, _ = qdrant_get_collection_status_rest()
+            if not exists_now or vec_now != EMBED_DIMS:
+                # Orphaned folder on disk blocking creation -> clean up and retry PUT
+                _cleanup_orphaned_qdrant_dir(r.text)
+                time.sleep(0.5)
+                r = requests.put(
+                    f"{base}/collections/{QDRANT_COLLECTION}",
+                    json={"vectors": {"size": EMBED_DIMS, "distance": "Cosine"}},
+                    timeout=15,
+                )
+            else:
+                r = None  # Already exists and valid
+        if r is not None and r.status_code not in (200, 201):
+            raise RuntimeError(f"Failed creating collection '{QDRANT_COLLECTION}': HTTP {r.status_code} {r.text}")
 
     for field in ("published_at", "feed", "group", "url"):
         schema_type = "integer" if field == "published_at" else "keyword"
