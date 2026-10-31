@@ -71,25 +71,25 @@ function Start-K13Service($svc) {
             $runner = Join-Path $BaseDir "scripts\windows\run-qdrant.ps1"
             $p = Start-Process powershell.exe -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$runner`"" -RedirectStandardOutput $logFile -RedirectStandardError (Join-Path $LogDir "qdrant_err.log") -PassThru -WindowStyle Hidden
             Save-ServicePid "qdrant" $p.Id
-            Write-Host "[✓] Qdrant started (PID: $($p.Id))" -ForegroundColor Green
+            Write-Host "[OK] Qdrant started (PID: $($p.Id))" -ForegroundColor Green
         }
         "openvino" {
             $runner = Join-Path $BaseDir "scripts\windows\run-openvino.ps1"
             $p = Start-Process powershell.exe -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$runner`"" -RedirectStandardOutput $logFile -RedirectStandardError (Join-Path $LogDir "openvino_err.log") -PassThru -WindowStyle Hidden
             Save-ServicePid "openvino" $p.Id
-            Write-Host "[✓] OpenVINO / IPEX-LLM started (PID: $($p.Id))" -ForegroundColor Green
+            Write-Host "[OK] OpenVINO / IPEX-LLM started (PID: $($p.Id))" -ForegroundColor Green
         }
         "web" {
             $runner = Join-Path $BaseDir "scripts\windows\run-web.ps1"
             $p = Start-Process powershell.exe -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$runner`"" -RedirectStandardOutput $logFile -RedirectStandardError (Join-Path $LogDir "web_err.log") -PassThru -WindowStyle Hidden
             Save-ServicePid "web" $p.Id
-            Write-Host "[✓] Web portal started (PID: $($p.Id))" -ForegroundColor Green
+            Write-Host "[OK] Web portal started (PID: $($p.Id))" -ForegroundColor Green
         }
         "rss" {
             $runner = Join-Path $BaseDir "scripts\windows\run-rss-sync.ps1"
             $p = Start-Process powershell.exe -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$runner`"" -RedirectStandardOutput $logFile -RedirectStandardError (Join-Path $LogDir "rss_err.log") -PassThru -WindowStyle Hidden
             Save-ServicePid "rss" $p.Id
-            Write-Host "[✓] RSS Sync job started (PID: $($p.Id))" -ForegroundColor Green
+            Write-Host "[OK] RSS Sync job started (PID: $($p.Id))" -ForegroundColor Green
         }
         default {
             Write-Host "Unknown service: $svc" -ForegroundColor Red
@@ -103,7 +103,7 @@ function Stop-K13Service($svc) {
         Write-Host "[-] Stopping $svc (PID: $id)..." -ForegroundColor Yellow
         Stop-Process -Id $id -Force -ErrorAction SilentlyContinue
         Remove-ServicePid $svc
-        Write-Host "[✓] $svc stopped." -ForegroundColor Green
+        Write-Host "[OK] $svc stopped." -ForegroundColor Green
     } else {
         # Fallback process search
         switch ($svc) {
@@ -133,7 +133,7 @@ switch ($Command.ToLower()) {
         # Qdrant probe
         try {
             $qRes = Invoke-RestMethod -Uri "http://127.0.0.1:6333/healthz" -TimeoutSec 3 -ErrorAction Stop
-            Write-Host "Qdrant    : [✓] HTTP 200 OK (Vector DB responsive)" -ForegroundColor Green
+            Write-Host "Qdrant    : [OK] HTTP 200 OK (Vector DB responsive)" -ForegroundColor Green
         } catch {
             Write-Host "Qdrant    : [-] Not responding (http://127.0.0.1:6333)" -ForegroundColor Red
         }
@@ -141,7 +141,7 @@ switch ($Command.ToLower()) {
         # OpenVINO probe
         try {
             $ovRes = Invoke-RestMethod -Uri "http://127.0.0.1:11434/healthz" -TimeoutSec 5 -ErrorAction Stop
-            Write-Host "OpenVINO  : [✓] Status: $($ovRes.status) | LLM: $($ovRes.llm_hardware) ($($ovRes.current_model)) | Embeddings: $($ovRes.embed_hardware)" -ForegroundColor Green
+            Write-Host "OpenVINO  : [OK] Status: $($ovRes.status) | LLM: $($ovRes.llm_hardware) ($($ovRes.current_model)) | Embeddings: $($ovRes.embed_hardware)" -ForegroundColor Green
         } catch {
             Write-Host "OpenVINO  : [-] Not responding (still loading model onto Intel Arc GPU?)" -ForegroundColor Yellow
         }
@@ -149,7 +149,7 @@ switch ($Command.ToLower()) {
         # Web portal probe
         try {
             $wRes = Invoke-WebRequest -Uri "http://localhost:3000" -TimeoutSec 3 -ErrorAction Stop
-            Write-Host "Web Portal: [✓] HTTP 200 OK -> http://localhost:3000" -ForegroundColor Green
+            Write-Host "Web Portal: [OK] HTTP 200 OK -> http://localhost:3000" -ForegroundColor Green
         } catch {
             Write-Host "Web Portal: [-] Not responding (http://localhost:3000)" -ForegroundColor DarkGray
         }
@@ -203,48 +203,20 @@ switch ($Command.ToLower()) {
     "check-hardware" {
         $Py = Join-Path $BaseDir ".venv-openvino\Scripts\python.exe"
         if (-not (Test-Path $Py)) { $Py = "python.exe" }
-        Write-Host "[*] Checking Windows Intel Arc GPU (XPU), NPU & IPEX-LLM..." -ForegroundColor Cyan
-        & $Py -c @"
-import os
-os.environ.setdefault('ZE_INIT_ALL_DRIVER_TYPES_ENABLE', '1')
-os.environ.setdefault('ONEAPI_DEVICE_SELECTOR', 'level_zero:*')
-import torch
-print('[*] PyTorch Version:', torch.__version__)
-xpu = hasattr(torch, 'xpu') and torch.xpu.is_available()
-count = torch.xpu.device_count() if xpu else 0
-print('[*] Intel Arc GPU (XPU) Available:', '[✓] YES' if xpu else '[-] NO')
-print('[*] Intel Arc GPU Device Count:', count)
-if count > 0:
-    print('    Device Name:', torch.xpu.get_device_name(0))
-else:
-    print('[-] Device count is 0. Ensure Intel Arc Graphics Windows 11 WHQL driver is installed.')
-try:
-    import ipex_llm
-    from ipex_llm.transformers import AutoModelForCausalLM
-    print('[+] IPEX-LLM Package: [✓] READY (version ' + str(ipex_llm.__version__) + ')')
-except Exception as e:
-    print('[-] IPEX-LLM Import Warning:', e)
-    if 'OffloadedCache' in str(e):
-        print('    Tip: Run .\\scripts\\windows\\k13ctl.ps1 fix-transformers to pin transformers<=4.44.2')
-try:
-    import openvino as ov
-    core = ov.Core()
-    devs = core.available_devices
-    print('[*] OpenVINO Devices Detected:', ', '.join(devs))
-    if 'NPU' in devs:
-        print('[+] Intel NPU Acceleration: [✓] AVAILABLE')
-    else:
-        print('[-] Intel NPU not detected in OpenVINO (CPU fallback will be used)')
-except Exception as e:
-    print('[-] OpenVINO Warning:', e)
-"@
+        $verifyScript = Join-Path $BaseDir "scripts\windows\verify_hardware.py"
+        if (Test-Path $verifyScript) {
+            & $Py $verifyScript
+        } else {
+            Write-Host "[-] Verification script not found at $verifyScript" -ForegroundColor Red
+        }
     }
 
     "fix-transformers" {
         $Pip = Join-Path $BaseDir ".venv-openvino\Scripts\pip.exe"
         Write-Host "[*] Pinning transformers<=4.44.2 to resolve OffloadedCache issue..." -ForegroundColor Yellow
-        & $Pip install "transformers>=4.37.0,<=4.44.2"
-        Write-Host "[✓] Done! Verifying IPEX-LLM..." -ForegroundColor Green
+        $fixArgs = @("install", "transformers>=4.37.0,<=4.44.2")
+        & $Pip @fixArgs
+        Write-Host "[OK] Done! Verifying IPEX-LLM..." -ForegroundColor Green
         & $PSCommandPath check-hardware
     }
 
