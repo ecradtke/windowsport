@@ -196,8 +196,27 @@ switch ($Command.ToLower()) {
 
     "logs" {
         $svc = if ($Target -and $Target -ne "all") { $Target } else { "llama" }
+        $errPath = Join-Path $LogDir "${svc}_err.log"
+        if (Test-Path $errPath) {
+            $errLines = Get-Content $errPath -Tail 40 -ErrorAction SilentlyContinue
+            if ($errLines) {
+                Write-Host "=== $errPath ===" -ForegroundColor Yellow
+                $errLines | ForEach-Object { Write-Host $_ }
+            }
+        }
+        if ($svc -eq "llama") {
+            $engineLog = Join-Path $LogDir "llama-server.log"
+            if (Test-Path $engineLog) {
+                $engLines = Get-Content $engineLog -Tail 30 -ErrorAction SilentlyContinue
+                if ($engLines) {
+                    Write-Host "=== $engineLog ===" -ForegroundColor Cyan
+                    $engLines | ForEach-Object { Write-Host $_ }
+                }
+            }
+        }
         $logPath = Join-Path $LogDir "$svc.log"
         if (Test-Path $logPath) {
+            Write-Host "=== $logPath (live) ===" -ForegroundColor Green
             Get-Content $logPath -Tail 60 -Wait
         } else {
             Write-Host "No log file found at $logPath" -ForegroundColor Yellow

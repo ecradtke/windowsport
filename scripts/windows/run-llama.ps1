@@ -23,9 +23,22 @@ if (Test-Path $EnvFile) {
     }
 }
 
-# Python selection
-$Py = Join-Path $BaseDir ".venv\Scripts\python.exe"
+# Python selection & automatic venv bootstrap if missing
+$VenvDir = Join-Path $BaseDir ".venv"
+$Py = Join-Path $VenvDir "Scripts\python.exe"
+$Pip = Join-Path $VenvDir "Scripts\pip.exe"
 if (-not (Test-Path $Py)) {
+    Write-Host "[*] Creating Python virtual environment (.venv)..." -ForegroundColor Yellow
+    & python.exe -m venv $VenvDir
+}
+if (Test-Path $Py) {
+    & $Py -c "import fastapi, uvicorn, transformers, torch" 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        $reqFile = Join-Path $BaseDir "llama\requirements.txt"
+        Write-Host "[*] Installing Python dependencies from $reqFile..." -ForegroundColor Yellow
+        & $Pip install -r $reqFile
+    }
+} else {
     $Py = "python.exe"
 }
 

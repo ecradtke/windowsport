@@ -261,11 +261,15 @@ function servicesManagerPlugin(): Plugin {
     const svc = SYSTEM_SERVICES.find(s => s.id === serviceId) || SYSTEM_SERVICES[0];
     const lines: string[] = [];
 
-    // 1. Read logs/<service>.log and logs/<service>_err.log
+    // 1. Read logs/<service>.log, logs/<service>_err.log, and logs/llama-server.log
     const logFile = path.resolve(process.cwd(), 'logs', `${svc.id}.log`);
     const errFile = path.resolve(process.cwd(), 'logs', `${svc.id}_err.log`);
+    const candidateFiles = [logFile, errFile];
+    if (svc.id === 'llama') {
+      candidateFiles.push(path.resolve(process.cwd(), 'logs', 'llama-server.log'));
+    }
 
-    for (const file of [logFile, errFile]) {
+    for (const file of candidateFiles) {
       if (fs.existsSync(file)) {
         try {
           const content = fs.readFileSync(file, 'utf-8');

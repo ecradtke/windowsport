@@ -31,7 +31,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] llama-server: %(message)s")
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] llama-server: %(message)s",
+    stream=sys.stdout,
+)
 logger = logging.getLogger("llama-server")
 
 # Directory & Runtime Configuration
