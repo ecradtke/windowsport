@@ -349,6 +349,35 @@ function servicesManagerPlugin(): Plugin {
     }));
   };
 
+  let lastRssRebuildTime = 0;
+
+  const handleRssRebuild = async (_req: any, res: any) => {
+    const now = Date.now();
+    if (now - lastRssRebuildTime < 30000) {
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ status: 'already_triggered' }));
+      return;
+    }
+    lastRssRebuildTime = now;
+
+    try {
+      const k13ctl = path.resolve(process.cwd(), 'scripts', 'windows', 'k13ctl.ps1');
+      const syncRunner = path.resolve(process.cwd(), 'scripts', 'windows', 'run-rss-sync.ps1');
+      if (fs.existsSync(syncRunner)) {
+        // Trigger a one-shot sync/rebuild in background and ensure rss service is started
+        exec(`powershell -NoProfile -ExecutionPolicy Bypass -File "${syncRunner}" -Once`);
+      }
+      if (fs.existsSync(k13ctl)) {
+        exec(`powershell -NoProfile -ExecutionPolicy Bypass -File "${k13ctl}" start rss`);
+      }
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ status: 'rebuild_started' }));
+    } catch (e: any) {
+      res.statusCode = 500;
+      res.end(JSON.stringify({ error: e?.message || String(e) }));
+    }
+  };
+
   const mountMiddlewares = (server: any) => {
     server.middlewares.use((req: any, res: any, next: any) => {
       if (req.url === '/api/services' && req.method === 'GET') {
@@ -362,6 +391,9 @@ function servicesManagerPlugin(): Plugin {
       }
       if (req.url === '/api/services/smoke-test' && req.method === 'POST') {
         return handleSmokeTest(req, res);
+      }
+      if (req.url === '/api/rss/rebuild' && req.method === 'POST') {
+        return handleRssRebuild(req, res);
       }
       next();
     });

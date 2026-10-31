@@ -113,7 +113,41 @@ export class K13Client {
   }
 
   /**
-   * Fetch collection status and record count from Qdrant vector database
+   * Ensure the active Qdrant collection exists and trigger a full RSS embedding rebuild if missing
+   */
+  private async ensureCollectionAndTriggerRebuild(): Promise<boolean> {
+    const col = this.config.activeCollection || 'rss_articles';
+    const dims = (this.config.currentEmbedModel || '').toLowerCase().includes('small') ? 384 : 768;
+    try {
+      const createRes = await this.qdrantFetch(`/collections/${col}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ vectors: { size: dims, distance: 'Cosine' } }),
+        signal: AbortSignal.timeout(8000)
+      });
+      if (createRes.ok) {
+        for (const field of ['published_at', 'feed', 'group', 'url']) {
+          const schema = field === 'published_at' ? 'integer' : 'keyword';
+          await this.qdrantFetch(`/collections/${col}/index?wait=true`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ field_name: field, field_schema: schema }),
+            signal: AbortSignal.timeout(5000)
+          }).catch(() => {});
+        }
+        // Trigger background full embedding rebuild via Vite middleware
+        fetch('/api/rss/rebuild', { method: 'POST' }).catch(() => {});
+        return true;
+      }
+    } catch {
+      // Ignore creation errors if Qdrant itself is offline
+    }
+    return false;
+  }
+
+  /**
+   * Fetch collection status and record count from Qdrant vector database.
+   * Automatically creates the collection and starts a full embedding rebuild if missing (404).
    */
   public async fetchCollectionStatus(): Promise<{
     connected: boolean;
@@ -128,11 +162,25 @@ export class K13Client {
       if (res.ok) {
         const data = await res.json();
         const count = data?.result?.points_count ?? data?.result?.vectors_count ?? 0;
+        if (count === 0) {
+          // Ensure background RSS embedding rebuild is running when collection is empty
+          fetch('/api/rss/rebuild', { method: 'POST' }).catch(() => {});
+        }
         return {
           connected: true,
           count,
           status: data?.result?.status || 'green'
         };
+      }
+      if (res.status === 404) {
+        const created = await this.ensureCollectionAndTriggerRebuild();
+        if (created) {
+          return {
+            connected: true,
+            count: 0,
+            status: 'rebuilding'
+          };
+        }
       }
       return {
         connected: false,
@@ -341,6 +389,8 @@ export class K13Client {
         if (searchRes.ok) {
           const resJson = await searchRes.json();
           points = resJson?.result?.points || [];
+        } else if (searchRes.status === 404) {
+          await this.ensureCollectionAndTriggerRebuild();
         }
 
         // Retry without filters if empty and filters were active

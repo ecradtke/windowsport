@@ -36,7 +36,8 @@ from qdrant_client.http.models import Distance, VectorParams, PointStruct, Paylo
 
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] k13-rss-sync: %(message)s"
+    format="%(asctime)s [%(levelname)s] k13-rss-sync: %(message)s",
+    stream=sys.stdout,
 )
 logger = logging.getLogger("k13-rss-sync")
 
@@ -683,51 +684,114 @@ def get_embeddings_batch(texts: List[str]) -> List[Optional[List[float]]]:
     return [get_embedding(t) for t in texts]
 
 
-def ensure_qdrant_collection(qdrant: QdrantClient) -> bool:
-    """Verifies Qdrant collection exists and matches EMBED_DIMS. Recreates if missing or mismatched."""
-    needs_rebuild = False
+def qdrant_get_collection_status_rest() -> Tuple[bool, int, int]:
+    """Query Qdrant collection status via direct REST API to avoid client version schema mismatches.
+    Returns (exists, vector_size, points_count).
+    """
+    base = QDRANT_URL.rstrip("/")
     try:
-        collections = qdrant.get_collections().collections
-        exists = any(c.name == QDRANT_COLLECTION for c in collections)
-        if exists:
-            info = qdrant.get_collection(QDRANT_COLLECTION)
-            vector_size = 0
-            if hasattr(info.config.params, "vectors"):
-                v_param = info.config.params.vectors
-                if hasattr(v_param, "size"):
-                    vector_size = v_param.size
-                elif isinstance(v_param, dict) and "" in v_param:
-                    vector_size = v_param[""].size
-
-            if vector_size != EMBED_DIMS:
-                logger.warning(f"Collection '{QDRANT_COLLECTION}' dimension mismatch ({vector_size} != {EMBED_DIMS}). Recreating...")
-                qdrant.delete_collection(QDRANT_COLLECTION)
-                exists = False
-                needs_rebuild = True
-            elif (info.points_count or 0) == 0:
-                logger.info(f"Collection '{QDRANT_COLLECTION}' exists but is empty (0 points). Marking for rebuild...")
-                needs_rebuild = True
-        else:
-            logger.info(f"Collection '{QDRANT_COLLECTION}' does not exist in Qdrant. Rebuilding...")
-            needs_rebuild = True
-
-        if not exists:
-            logger.info(f"Creating collection '{QDRANT_COLLECTION}' ({EMBED_DIMS} dims, Cosine)...")
-            qdrant.create_collection(
-                collection_name=QDRANT_COLLECTION,
-                vectors_config=VectorParams(size=EMBED_DIMS, distance=Distance.COSINE),
-            )
-            for field in ("published_at", "feed", "group", "url"):
-                schema_type = PayloadSchemaType.INTEGER if field == "published_at" else PayloadSchemaType.KEYWORD
-                qdrant.create_payload_index(
-                    collection_name=QDRANT_COLLECTION,
-                    field_name=field,
-                    field_schema=schema_type,
-                    wait=True
-                )
+        r = requests.get(f"{base}/collections/{QDRANT_COLLECTION}", timeout=10)
+        if r.status_code == 404:
+            return False, 0, 0
+        if r.status_code != 200:
+            logger.warning(f"Qdrant collection check returned HTTP {r.status_code}: {r.text[:200]}")
+            return False, 0, 0
+        data = r.json().get("result", {})
+        points_count = int(data.get("points_count") or data.get("vectors_count") or 0)
+        vectors_cfg = data.get("config", {}).get("params", {}).get("vectors", {})
+        vec_size = 0
+        if isinstance(vectors_cfg, dict):
+            if "size" in vectors_cfg:
+                vec_size = int(vectors_cfg["size"])
+            elif "" in vectors_cfg and isinstance(vectors_cfg[""], dict):
+                vec_size = int(vectors_cfg[""].get("size", 0))
+        return True, vec_size, points_count
     except Exception as e:
-        logger.error(f"Error checking Qdrant status: {e}")
-        needs_rebuild = False
+        logger.warning(f"Failed querying Qdrant collection '{QDRANT_COLLECTION}': {e}")
+        return False, 0, 0
+
+
+def qdrant_recreate_collection_rest() -> bool:
+    """Create (or recreate) Qdrant collection and payload indexes via direct REST API."""
+    base = QDRANT_URL.rstrip("/")
+    try:
+        requests.delete(f"{base}/collections/{QDRANT_COLLECTION}", timeout=10)
+    except Exception:
+        pass
+
+    logger.info(f"Creating Qdrant collection '{QDRANT_COLLECTION}' ({EMBED_DIMS} dims, Cosine)...")
+    r = requests.put(
+        f"{base}/collections/{QDRANT_COLLECTION}",
+        json={"vectors": {"size": EMBED_DIMS, "distance": "Cosine"}},
+        timeout=15,
+    )
+    if r.status_code not in (200, 201):
+        raise RuntimeError(f"Failed creating collection '{QDRANT_COLLECTION}': HTTP {r.status_code} {r.text}")
+
+    for field in ("published_at", "feed", "group", "url"):
+        schema_type = "integer" if field == "published_at" else "keyword"
+        try:
+            requests.put(
+                f"{base}/collections/{QDRANT_COLLECTION}/index?wait=true",
+                json={"field_name": field, "field_schema": schema_type},
+                timeout=15,
+            )
+        except Exception as idx_err:
+            logger.warning(f"Could not create payload index '{field}': {idx_err}")
+
+    logger.info(f"[✓] Created Qdrant collection '{QDRANT_COLLECTION}' with payload indexes.")
+    return True
+
+
+def qdrant_upsert_rest(points: List[PointStruct]) -> bool:
+    """Upsert points into Qdrant via REST API, auto-creating collection if missing."""
+    base = QDRANT_URL.rstrip("/")
+    serialized = [
+        {
+            "id": p.id,
+            "vector": p.vector,
+            "payload": p.payload,
+        }
+        for p in points
+    ]
+    url = f"{base}/collections/{QDRANT_COLLECTION}/points?wait=true"
+    r = requests.put(url, json={"points": serialized}, timeout=30)
+    if r.status_code == 404 or "not found" in r.text.lower() or "doesn't exist" in r.text.lower():
+        logger.warning(f"Collection '{QDRANT_COLLECTION}' missing during upsert! Recreating collection...")
+        qdrant_recreate_collection_rest()
+        r = requests.put(url, json={"points": serialized}, timeout=30)
+        return False  # Signal caller that collection was recreated mid-run and needs full DB reset
+    if r.status_code not in (200, 201):
+        raise RuntimeError(f"Qdrant upsert failed (HTTP {r.status_code}): {r.text[:200]}")
+    return True
+
+
+def ensure_qdrant_collection(qdrant: Optional[QdrantClient] = None) -> bool:
+    """Verifies Qdrant collection exists and matches EMBED_DIMS. Recreates if missing, failed, or mismatched."""
+    needs_rebuild = False
+    exists, vector_size, points_count = qdrant_get_collection_status_rest()
+
+    if exists:
+        if vector_size != EMBED_DIMS:
+            logger.warning(
+                f"Collection '{QDRANT_COLLECTION}' dimension mismatch ({vector_size} != {EMBED_DIMS}). "
+                "Recreating collection and triggering full embedding rebuild..."
+            )
+            qdrant_recreate_collection_rest()
+            needs_rebuild = True
+        elif points_count == 0:
+            logger.info(
+                f"Collection '{QDRANT_COLLECTION}' exists but has 0 points. "
+                "Triggering full embedding rebuild from PostgreSQL..."
+            )
+            needs_rebuild = True
+    else:
+        logger.info(
+            f"Collection '{QDRANT_COLLECTION}' does not exist in Qdrant. "
+            "Creating collection and triggering full embedding rebuild..."
+        )
+        qdrant_recreate_collection_rest()
+        needs_rebuild = True
 
     return needs_rebuild
 
@@ -1087,8 +1151,16 @@ def main():
                                 batch_freshrss_ids.append(meta["freshrss_id"])
 
                     if points_to_upsert:
-                        # Upsert to Qdrant collection
-                        qdrant.upsert(collection_name=QDRANT_COLLECTION, points=points_to_upsert)
+                        # Upsert to Qdrant collection (auto-recreating collection & resetting DB if missing)
+                        was_existing = qdrant_upsert_rest(points_to_upsert)
+                        if not was_existing:
+                            logger.warning(f"Resetting vector_indexed=FALSE on {qualified} for full embedding rebuild...")
+                            with conn.cursor() as reset_cur:
+                                reset_cur.execute(f"UPDATE {qualified} SET vector_indexed = FALSE;")
+                                conn.commit()
+                                reset_cur.execute(f"SELECT COUNT(*) FROM {qualified};")
+                                total_unindexed = reset_cur.fetchone()[0]
+                                processed = 0
 
                         # Update vector_indexed=TRUE in PostgreSQL
                         if id_is_int:
@@ -1105,7 +1177,7 @@ def main():
 
                         processed += len(points_to_upsert)
                         total_embedded += len(points_to_upsert)
-                        pct = (processed / total_unindexed) * 100
+                        pct = (processed / max(total_unindexed, 1)) * 100
                         logger.info(f"Embedded & Upserted: {processed:,} / {total_unindexed:,} ({pct:.1f}%) into Qdrant '{QDRANT_COLLECTION}'...")
                         newly_embedded_freshrss_ids.extend(batch_freshrss_ids)
                     else:
@@ -1115,8 +1187,8 @@ def main():
         conn.close()
 
     # 7. Fallback direct embedding if PostgreSQL was not available, but unread items exist
-    col_now = qdrant.get_collection(QDRANT_COLLECTION)
-    if (col_now.points_count or 0) == 0 and unread_items and total_embedded == 0:
+    _, _, current_points_count = qdrant_get_collection_status_rest()
+    if current_points_count == 0 and unread_items and total_embedded == 0:
         logger.info(f"PostgreSQL empty or offline. Embedding {len(unread_items)} FreshRSS items directly into Qdrant...")
         texts = [f"{it['title']}\n{it['text']}" for it in unread_items]
         vectors = get_embeddings_batch(texts)
@@ -1137,7 +1209,7 @@ def main():
                 direct_marked_ids.append(it["id"])
 
         if points:
-            qdrant.upsert(collection_name=QDRANT_COLLECTION, points=points)
+            qdrant_upsert_rest(points)
             logger.info(f"[✓] Directly upserted {len(points)} points into Qdrant.")
             newly_embedded_freshrss_ids.extend(direct_marked_ids)
 
@@ -1150,7 +1222,7 @@ def main():
         logger.info("No unread articles pending mark-as-read.")
 
     # 9. Report final metrics
-    final_count = qdrant.get_collection(QDRANT_COLLECTION).points_count or 0
+    _, _, final_count = qdrant_get_collection_status_rest()
     logger.info("=" * 70)
     logger.info(f"Sync complete. Total points in Qdrant '{QDRANT_COLLECTION}': {final_count:,}.")
     logger.info("=" * 70)
