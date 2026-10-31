@@ -32,7 +32,7 @@ if (-not (Test-Path $Py)) {
     & python.exe -m venv $VenvDir
 }
 if (Test-Path $Py) {
-    & $Py -c "import importlib.util, sys; sys.exit(0 if all(importlib.util.find_spec(m) for m in ('fastapi','uvicorn','transformers','torch')) else 1)"
+    & $Py -c "import importlib.util, sys; sys.exit(0 if all(importlib.util.find_spec(m) for m in ('fastapi','uvicorn','requests','huggingface_hub','numpy')) else 1)"
     if ($LASTEXITCODE -ne 0) {
         $reqFile = Join-Path $BaseDir "llama\requirements.txt"
         Write-Host "[*] Installing Python dependencies from $reqFile..." -ForegroundColor Yellow

@@ -1,11 +1,10 @@
-fastapi>=0.100.0
-uvicorn>=0.23.0
-numpy
+# K13 AI Hub - Windows llama.cpp Server & Orchestrator Dependencies
+# Works across Python 3.10 - 3.15+ (uses native llama-server.exe for GGUF LLMs & Embeddings)
+fastapi>=0.110.0
+uvicorn>=0.27.0
+requests>=2.31.0
+pydantic>=2.6.0
+numpy>=1.26.0
 huggingface_hub>=0.23.0
-requests
-pydantic
-torch
-transformers>=4.45.0
-sentencepiece
-protobuf
-
+psycopg2-binary>=2.9.9
+qdrant-client>=1.9.0

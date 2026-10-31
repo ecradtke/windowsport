@@ -60,13 +60,16 @@ LLAMA_CTX_SIZE = int(os.getenv("LLAMA_CTX_SIZE", "16384"))
 SERVER_HOST = os.getenv("LLAMA_HOST") or os.getenv("SERVER_HOST") or "0.0.0.0"
 SERVER_PORT = int(os.getenv("LLAMA_PORT") or os.getenv("SERVER_PORT") or "11434")
 INTERNAL_LLAMA_PORT = int(os.getenv("LLAMA_INTERNAL_PORT", str(SERVER_PORT + 1)))
+INTERNAL_EMBED_PORT = int(os.getenv("LLAMA_EMBED_PORT", str(SERVER_PORT + 2)))
 
 llm_lock = threading.Lock()
 embed_lock = threading.Lock()
 
 # Process & Model State
 llama_proc: Optional[subprocess.Popen] = None
+embed_proc: Optional[subprocess.Popen] = None
 current_gguf_path: Optional[str] = None
+current_embed_gguf_path: Optional[str] = None
 active_llm_device = INFERENCE_DEVICE
 active_embed_device = EMBED_DEVICE
 current_llm_repo = DEFAULT_LLM_REPO
@@ -80,6 +83,9 @@ embed_switch_status: Dict[str, Any] = {"state": "idle", "stage": "ready", "model
 
 # Mapping from standard HF repo IDs to official/community GGUF repos for convenience
 KNOWN_GGUF_REPOS: Dict[str, str] = {
+    "baai/bge-base-en-v1.5": "CompendiumLabs/bge-base-en-v1.5-gguf",
+    "baai/bge-small-en-v1.5": "CompendiumLabs/bge-small-en-v1.5-gguf",
+    "nomic-ai/nomic-embed-text-v1.5": "nomic-ai/nomic-embed-text-v1.5-GGUF",
     "qwen/qwen2.5-7b-instruct": "Qwen/Qwen2.5-7B-Instruct-GGUF",
     "qwen/qwen2.5-3b-instruct": "Qwen/Qwen2.5-3B-Instruct-GGUF",
     "qwen/qwen2.5-14b-instruct": "Qwen/Qwen2.5-14B-Instruct-GGUF",
@@ -110,6 +116,8 @@ PREFERRED_QUANTS = [
     "q5_k_s",
     "q6_k",
     "q8_0",
+    "f16",
+    "f32",
 ]
 
 
@@ -299,7 +307,26 @@ def stop_llama_process():
             llama_proc = None
 
 
+def stop_embed_process():
+    """Stop the running embedding llama-server.exe subprocess cleanly."""
+    global embed_proc
+    if embed_proc is not None:
+        try:
+            if embed_proc.poll() is None:
+                logger.info(f"Stopping embedding llama-server.exe subprocess (PID {embed_proc.pid})...")
+                embed_proc.terminate()
+                try:
+                    embed_proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    embed_proc.kill()
+        except Exception as e:
+            logger.warning(f"Error stopping embedding llama-server.exe: {e}")
+        finally:
+            embed_proc = None
+
+
 atexit.register(stop_llama_process)
+atexit.register(stop_embed_process)
 
 
 def start_llama_subprocess(gguf_path: str, ngl: int) -> subprocess.Popen:
@@ -436,12 +463,81 @@ def load_llm(model_id: str):
             raise RuntimeError(err_msg)
 
 
+def start_embed_subprocess(gguf_path: str, ngl: int) -> subprocess.Popen:
+    """Spawn llama-server.exe in --embeddings mode on INTERNAL_EMBED_PORT."""
+    bin_path = find_llama_server_binary()
+    if not bin_path:
+        raise RuntimeError(
+            "llama-server.exe not found! Ensure llama.cpp is in your PATH, "
+            "or set LLAMA_SERVER_BIN / LLAMA_CPP_DIR in your .env file."
+        )
+
+    bin_dir = os.path.dirname(os.path.abspath(bin_path))
+    cmd = [
+        bin_path,
+        "-m", gguf_path,
+        "--host", "127.0.0.1",
+        "--port", str(INTERNAL_EMBED_PORT),
+        "--embeddings",
+        "-ngl", str(ngl),
+        "-c", "2048",
+        "-b", "2048",
+        "-ub", "2048",
+    ]
+
+    logger.info(f"Launching llama.cpp embedding server: {' '.join(cmd)}")
+    creation_flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+    proc = subprocess.Popen(
+        cmd,
+        cwd=bin_dir or BASE_DIR,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        creationflags=creation_flags,
+    )
+
+    recent_lines: List[str] = []
+
+    def _embed_log_reader(p: subprocess.Popen):
+        try:
+            if p.stdout:
+                for line in p.stdout:
+                    s = line.rstrip()
+                    if s:
+                        recent_lines.append(s)
+                        if len(recent_lines) > 30:
+                            recent_lines.pop(0)
+        except Exception:
+            pass
+
+    threading.Thread(target=_embed_log_reader, args=(proc,), daemon=True).start()
+
+    health_url = f"http://127.0.0.1:{INTERNAL_EMBED_PORT}/health"
+    deadline = time.time() + 90
+    while time.time() < deadline:
+        if proc.poll() is not None:
+            tail = "\n".join(recent_lines[-10:])
+            raise RuntimeError(f"Embedding llama-server.exe exited early (code {proc.returncode}). Log tail:\n{tail}")
+        try:
+            r = requests.get(health_url, timeout=2)
+            if r.status_code == 200 and r.json().get("status") == "ok":
+                return proc
+        except Exception:
+            pass
+        time.sleep(0.5)
+
+    proc.terminate()
+    raise RuntimeError("Timed out waiting for embedding llama-server.exe to start.")
+
+
 def load_embed(model_id: str):
-    """Load Hugging Face vector embedding model (e.g. BAAI/bge-base-en-v1.5 768d)."""
-    global embed_model, embed_tokenizer, active_embed_device, current_embed_repo, embed_switch_status
+    """Load vector embedding model (e.g. BAAI/bge-base-en-v1.5 768d) via llama.cpp GGUF (or PyTorch fallback)."""
+    global embed_proc, current_embed_gguf_path, embed_model, embed_tokenizer, active_embed_device, current_embed_repo, embed_switch_status
 
     with embed_lock:
-        logger.info(f"Loading embedding model '{model_id}'...")
+        logger.info(f"Loading embedding model '{model_id}' via llama.cpp...")
         embed_switch_status = {
             "state": "loading",
             "stage": "downloading",
@@ -450,32 +546,32 @@ def load_embed(model_id: str):
             "start_time": time.time(),
         }
         try:
-            import torch
-            from transformers import AutoTokenizer, AutoModel
+            # Prefer native llama.cpp GGUF embedding server (works on all Python versions without PyTorch)
+            resolved_repo, gguf_path = resolve_gguf_file(model_id)
+            embed_switch_status["stage"] = "compiling"
+            stop_embed_process()
 
-            hf_token = os.getenv("HF_TOKEN") or os.getenv("HUGGING_FACE_HUB_TOKEN") or None
-            tok = AutoTokenizer.from_pretrained(model_id, token=hf_token, trust_remote_code=True)
-            pt_model = AutoModel.from_pretrained(model_id, token=hf_token, trust_remote_code=True)
+            want_gpu = EMBED_DEVICE != "CPU" and LLAMA_NGL > 0
+            target_ngl = LLAMA_NGL if want_gpu else 0
+            try:
+                proc = start_embed_subprocess(gguf_path, ngl=target_ngl)
+                embed_proc = proc
+                active_embed_device = "GPU" if target_ngl > 0 else "CPU"
+            except Exception as gpu_err:
+                if target_ngl > 0:
+                    logger.warning(f"Embedding GPU offload failed ({gpu_err}); falling back to CPU (-ngl 0)...")
+                    proc = start_embed_subprocess(gguf_path, ngl=0)
+                    embed_proc = proc
+                    active_embed_device = "CPU"
+                else:
+                    raise gpu_err
 
-            target_dev = "cpu"
-            dev_label = "CPU"
-            if EMBED_DEVICE != "CPU":
-                if hasattr(torch, "cuda") and torch.cuda.is_available():
-                    target_dev = "cuda"
-                    dev_label = "GPU"
-                elif hasattr(torch, "xpu") and torch.xpu.is_available():
-                    target_dev = "xpu"
-                    dev_label = "GPU"
-
-            pt_model = pt_model.to(target_dev)
-            pt_model.eval()
-
-            embed_tokenizer = tok
-            embed_model = pt_model
-            active_embed_device = dev_label
+            current_embed_gguf_path = gguf_path
+            embed_model = None
+            embed_tokenizer = None
             current_embed_repo = model_id
             embed_switch_status = {"state": "idle", "stage": "ready", "model": model_id, "error": None}
-            logger.info(f"[✓] Embedding model '{model_id}' active on {active_embed_device}")
+            logger.info(f"[✓] Embedding model '{model_id}' ({os.path.basename(gguf_path)}) active via llama.cpp on {active_embed_device}")
         except Exception as e:
             logger.error(f"Failed to load embedding model '{model_id}': {e}")
             embed_switch_status = {"state": "error", "stage": "failed", "model": current_embed_repo, "error": str(e)}
@@ -519,6 +615,7 @@ def startup_event():
 @app.on_event("shutdown")
 def shutdown_event():
     stop_llama_process()
+    stop_embed_process()
 
 
 @app.get("/healthz")
@@ -653,27 +750,39 @@ def embed_endpoint(req: EmbedReq):
 
     dims = 384 if "small" in (req.model or current_embed_repo).lower() else 768
 
-    if not embed_model or not embed_tokenizer:
-        return {"embeddings": [[0.0] * dims for _ in texts], "embedding": [0.0] * dims}
-
     with embed_lock:
-        import torch
-        results = []
-        dev = next(embed_model.parameters()).device
-        for text in texts:
-            inputs = embed_tokenizer(text, padding=True, truncation=True, max_length=512, return_tensors="pt")
-            inputs = {k: v.to(dev) for k, v in inputs.items()}
-            with torch.no_grad():
-                out = embed_model(**inputs)
-                token_embs = out[0]
-                mask = inputs["attention_mask"].unsqueeze(-1).expand(token_embs.size()).float()
-                sum_embs = torch.sum(token_embs * mask, 1)
-                sum_mask = torch.clamp(mask.sum(1), min=1e-9)
-                pooled = sum_embs / sum_mask
-                norm = torch.nn.functional.normalize(pooled, p=2, dim=1)
-                results.append(norm[0].cpu().tolist())
+        if embed_proc is None or embed_proc.poll() is not None:
+            if current_embed_gguf_path and os.path.isfile(current_embed_gguf_path):
+                try:
+                    ngl = LLAMA_NGL if active_embed_device == "GPU" else 0
+                    globals()["embed_proc"] = start_embed_subprocess(current_embed_gguf_path, ngl=ngl)
+                except Exception as e:
+                    logger.warning(f"Could not restart embedding server: {e}")
 
-        return {"embeddings": results, "embedding": results[0] if results else [0.0] * dims}
+        if embed_proc is not None and embed_proc.poll() is None:
+            try:
+                r = requests.post(
+                    f"http://127.0.0.1:{INTERNAL_EMBED_PORT}/v1/embeddings",
+                    json={"input": texts},
+                    timeout=60,
+                )
+                if r.status_code == 200:
+                    data = r.json().get("data", [])
+                    results: List[List[float]] = []
+                    for item in data:
+                        vec = np.array(item.get("embedding", []), dtype=np.float32)
+                        if vec.ndim > 1:
+                            vec = vec[0]
+                        norm_val = float(np.linalg.norm(vec))
+                        if norm_val > 1e-9:
+                            vec = vec / norm_val
+                        results.append(vec.tolist())
+                    if results:
+                        return {"embeddings": results, "embedding": results[0]}
+            except Exception as e:
+                logger.warning(f"Embedding request via llama-server failed: {e}")
+
+        return {"embeddings": [[0.0] * dims for _ in texts], "embedding": [0.0] * dims}
 
 
 @app.post("/v1/embeddings")
