@@ -1,0 +1,15 @@
+--extra-index-url https://download.pytorch.org/whl/xpu
+fastapi>=0.100.0
+uvicorn>=0.23.0
+numpy
+huggingface_hub
+requests
+pydantic
+transformers>=4.37.0,<=4.44.2
+accelerate
+sentencepiece
+protobuf
+openvino
+openvino-genai
+optimum-intel
+nncf
