@@ -17,8 +17,8 @@ External: FreshRSS API and PostgreSQL (`fetch42`, `freshrss`) on the NAS; backup
 
 ## Hardware topology
 - **GPU (via `llama.cpp` Vulkan / SYCL / CUDA)**: chat & reasoning LLMs in GGUF format via `llama-server.exe` (`-ngl 99`), default `Qwen/Qwen2.5-7B-Instruct-GGUF`.
-- **Embeddings**: `BAAI/bge-base-en-v1.5` (768 dims, the default at every start and install) or `BAAI/bge-small-en-v1.5` (384 dims).
-- **CPU fallback**: A model switch that cannot offload to the GPU falls back to CPU (`-ngl 0`) when `SWITCH_ALLOW_CPU=on`.
+- **NPU (Intel AI Boost NPU)**: vector embeddings `BAAI/bge-base-en-v1.5` (768 dims, default at every start and install) or `BAAI/bge-small-en-v1.5` (384 dims) compiled with static `[1, 512]` shapes onto the Intel NPU (`EMBED_DEVICE=NPU`).
+- **CPU fallback**: An LLM model switch that cannot offload to the GPU falls back to CPU (`-ngl 0`) when `SWITCH_ALLOW_CPU=on`.
 
 ## Layout
 `llama\` `llama.cpp` FastAPI orchestrator & embedding server - `src\` React portal - `rss\` sync - `scripts\windows\` PowerShell installer, control CLI (`k13ctl.ps1`), hardware verifier (`verify_hardware.py`), and service runners (`run-*.ps1`) - root `*.bat` quick-launchers (`install.bat`, `start-all.bat`, `stop-all.bat`, `status.bat`, `check-hardware.bat`).

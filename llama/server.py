@@ -45,7 +45,8 @@ MODELS_DIR = os.getenv("LLAMA_MODELS_DIR") or os.getenv("MODELS_DIR") or default
 os.makedirs(MODELS_DIR, exist_ok=True)
 
 INFERENCE_DEVICE = os.getenv("LLM_DEVICE", "GPU").upper()
-EMBED_DEVICE = os.getenv("EMBED_DEVICE", "CPU").upper()
+# Always target Intel NPU for vector embeddings so GPU remains 100% dedicated to llama.cpp LLMs
+EMBED_DEVICE = "NPU"
 
 DEFAULT_LLM_REPO = os.getenv("DEFAULT_MODEL", "Qwen/Qwen2.5-7B-Instruct-GGUF")
 if not DEFAULT_LLM_REPO or DEFAULT_LLM_REPO.lower() in ("default", "none"):
@@ -77,6 +78,7 @@ current_embed_repo = DEFAULT_EMBED_REPO
 
 embed_model = None
 embed_tokenizer = None
+embed_input_names: List[str] = []
 
 model_switch_status: Dict[str, Any] = {"state": "idle", "stage": "ready", "model": DEFAULT_LLM_REPO, "error": None}
 embed_switch_status: Dict[str, Any] = {"state": "idle", "stage": "ready", "model": DEFAULT_EMBED_REPO, "error": None}
@@ -532,48 +534,104 @@ def start_embed_subprocess(gguf_path: str, ngl: int) -> subprocess.Popen:
     raise RuntimeError("Timed out waiting for embedding llama-server.exe to start.")
 
 
+def _resolve_onnx_embed_repo(model_id: str) -> str:
+    """Ensure embedding repo points to the canonical HF repo containing tokenizer.json & onnx/model.onnx."""
+    clean = model_id.strip()
+    low = clean.lower()
+    if "bge-small" in low:
+        return "BAAI/bge-small-en-v1.5"
+    if "bge-base" in low or "bge" in low:
+        return "BAAI/bge-base-en-v1.5"
+    return clean
+
+
 def load_embed(model_id: str):
-    """Load vector embedding model (e.g. BAAI/bge-base-en-v1.5 768d) via llama.cpp GGUF (or PyTorch fallback)."""
-    global embed_proc, current_embed_gguf_path, embed_model, embed_tokenizer, active_embed_device, current_embed_repo, embed_switch_status
+    """Load vector embedding model (e.g. BAAI/bge-base-en-v1.5 768d) onto the Intel NPU."""
+    global embed_proc, current_embed_gguf_path, embed_model, embed_tokenizer, embed_input_names, active_embed_device, current_embed_repo, embed_switch_status
 
     with embed_lock:
-        logger.info(f"Loading embedding model '{model_id}' via llama.cpp...")
+        target_repo = _resolve_onnx_embed_repo(model_id)
+        logger.info(f"Loading embedding model '{target_repo}' onto Intel NPU...")
         embed_switch_status = {
             "state": "loading",
             "stage": "downloading",
-            "model": model_id,
+            "model": target_repo,
             "error": None,
             "start_time": time.time(),
         }
         try:
-            # Prefer native llama.cpp GGUF embedding server (works on all Python versions without PyTorch)
-            resolved_repo, gguf_path = resolve_gguf_file(model_id)
-            embed_switch_status["stage"] = "compiling"
             stop_embed_process()
+            hf_token = os.getenv("HF_TOKEN") or os.getenv("HUGGING_FACE_HUB_TOKEN") or None
+            from huggingface_hub import hf_hub_download
+            from tokenizers import Tokenizer
+            import openvino as ov
 
-            want_gpu = EMBED_DEVICE != "CPU" and LLAMA_NGL > 0
-            target_ngl = LLAMA_NGL if want_gpu else 0
+            local_repo_dir = os.path.join(MODELS_DIR, target_repo.replace("/", "__"))
+            os.makedirs(local_repo_dir, exist_ok=True)
+
+            tok_path = hf_hub_download(
+                repo_id=target_repo,
+                filename="tokenizer.json",
+                local_dir=local_repo_dir,
+                token=hf_token,
+            )
             try:
-                proc = start_embed_subprocess(gguf_path, ngl=target_ngl)
-                embed_proc = proc
-                active_embed_device = "GPU" if target_ngl > 0 else "CPU"
-            except Exception as gpu_err:
-                if target_ngl > 0:
-                    logger.warning(f"Embedding GPU offload failed ({gpu_err}); falling back to CPU (-ngl 0)...")
-                    proc = start_embed_subprocess(gguf_path, ngl=0)
-                    embed_proc = proc
-                    active_embed_device = "CPU"
-                else:
-                    raise gpu_err
+                onnx_path = hf_hub_download(
+                    repo_id=target_repo,
+                    filename="onnx/model.onnx",
+                    local_dir=local_repo_dir,
+                    token=hf_token,
+                )
+            except Exception:
+                onnx_path = hf_hub_download(
+                    repo_id=target_repo,
+                    filename="model.onnx",
+                    local_dir=local_repo_dir,
+                    token=hf_token,
+                )
 
-            current_embed_gguf_path = gguf_path
-            embed_model = None
-            embed_tokenizer = None
-            current_embed_repo = model_id
-            embed_switch_status = {"state": "idle", "stage": "ready", "model": model_id, "error": None}
-            logger.info(f"[✓] Embedding model '{model_id}' ({os.path.basename(gguf_path)}) active via llama.cpp on {active_embed_device}")
+            embed_switch_status["stage"] = "compiling"
+
+            tok = Tokenizer.from_file(tok_path)
+            tok.enable_truncation(max_length=512)
+            tok.enable_padding(length=512, pad_id=0, pad_token="[PAD]")
+
+            core = ov.Core()
+            npu_cache_dir = os.path.join(MODELS_DIR, "npu_cache")
+            os.makedirs(npu_cache_dir, exist_ok=True)
+            try:
+                core.set_property({"CACHE_DIR": npu_cache_dir})
+            except Exception:
+                pass
+
+            avail = core.available_devices
+            logger.info(f"Available accelerator devices for embeddings: {avail}")
+            if "NPU" not in avail:
+                raise RuntimeError(
+                    f"Intel NPU device not found in available devices ({avail}). "
+                    "Verify the Intel AI Boost NPU driver is enabled in Windows Device Manager."
+                )
+
+            ov_model = core.read_model(onnx_path)
+            shapes = {}
+            inp_names: List[str] = []
+            for inp in ov_model.inputs:
+                name = inp.get_any_name()
+                inp_names.append(name)
+                shapes[name] = [1, 512]
+            ov_model.reshape(shapes)
+
+            compiled = core.compile_model(ov_model, "NPU")
+
+            embed_tokenizer = tok
+            embed_model = compiled
+            embed_input_names = inp_names
+            active_embed_device = "NPU"
+            current_embed_repo = target_repo
+            embed_switch_status = {"state": "idle", "stage": "ready", "model": target_repo, "error": None}
+            logger.info(f"[✓] Embedding model '{target_repo}' compiled and active on Intel NPU (static [1, 512])")
         except Exception as e:
-            logger.error(f"Failed to load embedding model '{model_id}': {e}")
+            logger.error(f"Failed to load embedding model '{model_id}' on Intel NPU: {e}")
             embed_switch_status = {"state": "error", "stage": "failed", "model": current_embed_repo, "error": str(e)}
             raise e
 
@@ -750,39 +808,45 @@ def embed_endpoint(req: EmbedReq):
 
     dims = 384 if "small" in (req.model or current_embed_repo).lower() else 768
 
+    if embed_model is None or embed_tokenizer is None:
+        try:
+            load_embed(req.model or current_embed_repo)
+        except Exception as e:
+            raise HTTPException(status_code=503, detail=f"Intel NPU embedding model not ready: {e}")
+
     with embed_lock:
-        if embed_proc is None or embed_proc.poll() is not None:
-            if current_embed_gguf_path and os.path.isfile(current_embed_gguf_path):
-                try:
-                    ngl = LLAMA_NGL if active_embed_device == "GPU" else 0
-                    globals()["embed_proc"] = start_embed_subprocess(current_embed_gguf_path, ngl=ngl)
-                except Exception as e:
-                    logger.warning(f"Could not restart embedding server: {e}")
+        results: List[List[float]] = []
+        for text in texts:
+            enc = embed_tokenizer.encode(text or "")
+            ids = np.array([enc.ids], dtype=np.int64)
+            mask = np.array([enc.attention_mask], dtype=np.int64)
+            type_ids = np.array([enc.type_ids], dtype=np.int64)
 
-        if embed_proc is not None and embed_proc.poll() is None:
-            try:
-                r = requests.post(
-                    f"http://127.0.0.1:{INTERNAL_EMBED_PORT}/v1/embeddings",
-                    json={"input": texts},
-                    timeout=60,
-                )
-                if r.status_code == 200:
-                    data = r.json().get("data", [])
-                    results: List[List[float]] = []
-                    for item in data:
-                        vec = np.array(item.get("embedding", []), dtype=np.float32)
-                        if vec.ndim > 1:
-                            vec = vec[0]
-                        norm_val = float(np.linalg.norm(vec))
-                        if norm_val > 1e-9:
-                            vec = vec / norm_val
-                        results.append(vec.tolist())
-                    if results:
-                        return {"embeddings": results, "embedding": results[0]}
-            except Exception as e:
-                logger.warning(f"Embedding request via llama-server failed: {e}")
+            feed: Dict[str, np.ndarray] = {}
+            for name in embed_input_names:
+                if "input_ids" in name:
+                    feed[name] = ids
+                elif "attention_mask" in name:
+                    feed[name] = mask
+                elif "token_type_ids" in name:
+                    feed[name] = type_ids
+                else:
+                    feed[name] = ids
 
-        return {"embeddings": [[0.0] * dims for _ in texts], "embedding": [0.0] * dims}
+            ov_out = embed_model(feed)
+            token_embs = np.array(list(ov_out.values())[0], dtype=np.float32)
+
+            # Mean pooling with attention mask + L2 normalization
+            mask_exp = np.expand_dims(mask, axis=-1).astype(np.float32)
+            sum_embs = np.sum(token_embs * mask_exp, axis=1)
+            sum_mask = np.clip(np.sum(mask_exp, axis=1), a_min=1e-9, a_max=None)
+            pooled = (sum_embs / sum_mask)[0]
+            norm_val = float(np.linalg.norm(pooled))
+            if norm_val > 1e-9:
+                pooled = pooled / norm_val
+            results.append(pooled.tolist())
+
+        return {"embeddings": results, "embedding": results[0] if results else [0.0] * dims}
 
 
 @app.post("/v1/embeddings")

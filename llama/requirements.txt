@@ -1,10 +1,13 @@
-# K13 AI Hub - Windows llama.cpp Server & Orchestrator Dependencies
-# Works across Python 3.10 - 3.15+ (uses native llama-server.exe for GGUF LLMs & Embeddings)
+# K13 AI Hub - Windows llama.cpp Server & Intel NPU Embedding Dependencies
+# LLMs run via native llama-server.exe (GGUF on GPU)
+# Embeddings (BAAI/bge-base-en-v1.5) run on the Intel NPU via openvino + tokenizers
 fastapi>=0.110.0
 uvicorn>=0.27.0
 requests>=2.31.0
 pydantic>=2.6.0
 numpy>=1.26.0
 huggingface_hub>=0.23.0
+tokenizers>=0.19.0
+openvino>=2024.4.0
 psycopg2-binary>=2.9.9
 qdrant-client>=1.9.0

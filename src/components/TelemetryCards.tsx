@@ -27,7 +27,7 @@ export const TelemetryCards: React.FC<TelemetryCardsProps> = ({ config, articleC
           </span>
         </div>
         <div className="text-[11px] text-slate-500 mt-1 font-mono">
-          LLM: GGUF • Embed: BGE-Base 768d
+          LLM: GGUF ({config.llmHardware}) • Embed: {config.embedHardware} (768d)
         </div>
       </div>
 
