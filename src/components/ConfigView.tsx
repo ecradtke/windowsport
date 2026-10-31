@@ -60,7 +60,7 @@ const KNOWN_ENV_VARIABLES: EnvVarDefinition[] = [
     key: 'EMBED_MODEL',
     defaultVal: 'BAAI/bge-base-en-v1.5',
     category: 'Models & Hardware',
-    desc: 'Default 768-dim embeddings model loaded onto the Intel NPU (/dev/accel/accel0).'
+    desc: 'Default 768-dim embeddings model loaded onto the Intel NPU (OpenVINO).'
   },
   {
     key: 'LLM_DEVICE',
@@ -118,7 +118,7 @@ const KNOWN_ENV_VARIABLES: EnvVarDefinition[] = [
   },
   {
     key: 'K13_DATA_DIR',
-    defaultVal: '/opt/k13/data',
+    defaultVal: '.\data',
     category: 'Storage & NAS',
     desc: 'Base data directory for Qdrant storage, models, and snapshots.'
   },
@@ -126,7 +126,7 @@ const KNOWN_ENV_VARIABLES: EnvVarDefinition[] = [
     key: 'FRESHRSS_BASE_URL',
     defaultVal: 'http://nas.local:8080/api/greader.php',
     category: 'External Services',
-    desc: 'NAS FreshRSS API endpoint for the 5-minute k13-rss-sync timer.'
+    desc: 'NAS FreshRSS API endpoint for the 5-minute RSS sync service.'
   },
   {
     key: 'PG_HOST',
@@ -405,7 +405,7 @@ export const ConfigView: React.FC<ConfigViewProps> = ({ config, onUpdateConfig }
             <span>Configuration & Environment (.env)</span>
           </h2>
           <p className="text-sm text-slate-400 mt-1">
-            Parameters parsed dynamically as key-value pairs by <code>scripts/_lib.sh</code> and reflected live in the UI.
+            Parameters parsed dynamically as key-value pairs by <code>scripts\windows\run-*.ps1</code> and reflected live in the UI.
           </p>
         </div>
 
@@ -435,7 +435,7 @@ export const ConfigView: React.FC<ConfigViewProps> = ({ config, onUpdateConfig }
           </span>
         </div>
         <p className="text-xs text-slate-400">
-          The hub runs natively on this Ubuntu Server. Direct connections reach ports :11434 (OpenVINO) and :6333 (Qdrant).
+          The hub runs natively on Windows. Direct connections reach ports :11434 (OpenVINO / IPEX-LLM) and :6333 (Qdrant).
         </p>
         <div className="grid grid-cols-2 gap-2 pt-2">
           <button
@@ -768,7 +768,7 @@ MAX_NEW_TOKENS=2048`}
           </pre>
           <p className="text-slate-400 text-[11px]">
             Then restart the web portal service (or click &ldquo;Reload .env from Disk&rdquo; above) to pick up changes:
-            <code className="ml-1 px-1.5 py-0.5 rounded bg-slate-900 text-indigo-300 font-mono">sudo systemctl restart k13-web</code>
+            <code className="ml-1 px-1.5 py-0.5 rounded bg-slate-900 text-indigo-300 font-mono">.\scripts\windows\k13ctl.ps1 restart web</code>
           </p>
         </div>
 
@@ -779,7 +779,7 @@ MAX_NEW_TOKENS=2048`}
             <span>Hardware Topology & KV Cache Memory Impact (6.8 GB Intel GPU VRAM Ceiling)</span>
           </div>
           <p className="text-slate-400 text-xs">
-            On the native Ubuntu Server host, the Intel Lunar Lake / Arc GPU runtime caps at <strong>~6.8 GB VRAM</strong>. Context tokens consume GPU memory via Key-Value (KV) Cache:
+            On the native Windows host, the Intel Lunar Lake / Arc GPU runtime caps at <strong>~6.8 GB VRAM</strong>. Context tokens consume GPU memory via Key-Value (KV) Cache:
           </p>
           <div className="overflow-x-auto border border-slate-800 rounded-lg">
             <table className="w-full text-left font-mono text-[11px]">
@@ -871,7 +871,7 @@ MAX_NEW_TOKENS=2048`}
                 <span>4. Resource Contention with BGE</span>
               </div>
               <p className="text-[11px] text-slate-400 leading-relaxed">
-                In this cluster, the NPU is dedicated to <code>BAAI/bge-base-en-v1.5</code> (768d) for continuous search & the 5-minute <code>k13-rss-sync</code> timer. Moving the LLM to the NPU causes device contention and eviction on <code>/dev/accel/accel0</code>.
+                In this cluster, the NPU is dedicated to <code>BAAI/bge-base-en-v1.5</code> (768d) for continuous search & the 5-minute <code>run-rss-sync.ps1</code> background job. Moving the LLM to the NPU causes device contention and eviction on the Intel NPU.
               </p>
             </div>
           </div>
@@ -882,10 +882,10 @@ MAX_NEW_TOKENS=2048`}
       <div className="p-5 rounded-2xl bg-slate-900/60 border border-slate-800 text-xs text-slate-400 space-y-2">
         <div className="font-bold text-slate-200 font-sans text-sm flex items-center gap-2">
           <Terminal className="w-4 h-4 text-emerald-400" />
-          <span>Platform Guidelines & Systemd Rules</span>
+          <span>Platform Guidelines & Windows Native Rules</span>
         </div>
         <p>
-          1. <strong>OpenVINO does all inference:</strong> pure Intel OpenVINO, no containers, no Ollama, no llama.cpp.
+          1. <strong>IPEX-LLM & OpenVINO do all inference:</strong> native Windows execution, no containers, no WSL, no Ollama, no llama.cpp.
         </p>
         <p>
           2. <strong>Embedding dimension must match the Qdrant collection:</strong> 768 for the default <code>bge-base-en-v1.5</code>, 384 for <code>bge-small-en-v1.5</code>.

@@ -2,7 +2,6 @@ import React, { useState, useMemo } from 'react';
 import {
   Cpu,
   Zap,
-  HardDrive,
   AlertTriangle,
   CheckCircle,
   RefreshCw,
@@ -75,7 +74,7 @@ export const ModelManagerView: React.FC<ModelManagerViewProps> = ({
           )}
         </div>
         <p className="text-sm text-slate-400">
-          Intel Extension for PyTorch (IPEX-LLM) runtime partition: Chat & reasoning LLMs accelerated on Intel Arc GPU / XPU (/dev/dri) with on-the-fly INT4 quantization, embeddings pinned to Intel NPU (/dev/accel/accel0).
+          Intel Extension for PyTorch (IPEX-LLM) runtime partition on Windows: Chat & reasoning LLMs accelerated on Intel Arc GPU / XPU (oneAPI Level Zero) with on-the-fly INT4 quantization, embeddings pinned to Intel NPU (OpenVINO).
         </p>
       </div>
 
@@ -85,7 +84,7 @@ export const ModelManagerView: React.FC<ModelManagerViewProps> = ({
         <div className="p-4 rounded-xl bg-slate-900/80 border border-slate-800 shadow-lg">
           <div className="flex items-center justify-between mb-2">
             <span className="text-xs uppercase font-bold tracking-wider text-slate-400">
-              Intel Arc GPU / XPU (/dev/dri)
+              Intel Arc GPU / XPU (Level Zero)
             </span>
             <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 shadow-[0_0_8px_#34d399]" />
           </div>
@@ -103,7 +102,7 @@ export const ModelManagerView: React.FC<ModelManagerViewProps> = ({
         <div className="p-4 rounded-xl bg-slate-900/80 border border-slate-800 shadow-lg">
           <div className="flex items-center justify-between mb-2">
             <span className="text-xs uppercase font-bold tracking-wider text-slate-400">
-              Intel NPU (/dev/accel/accel0)
+              Intel NPU (OpenVINO)
             </span>
             <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 shadow-[0_0_8px_#34d399]" />
           </div>
@@ -125,7 +124,7 @@ export const ModelManagerView: React.FC<ModelManagerViewProps> = ({
             </span>
             <Layers className="w-4 h-4 text-purple-400" />
           </div>
-          <div className="text-lg font-bold text-slate-100">Native IPEX-LLM</div>
+          <div className="text-lg font-bold text-slate-100">Windows Native IPEX-LLM</div>
           <div className="text-xs text-slate-400 mt-2 space-y-1">
             <label className="flex items-center gap-2 cursor-pointer mt-1">
               <input
@@ -379,7 +378,7 @@ export const ModelManagerView: React.FC<ModelManagerViewProps> = ({
             <span>NPU Vector Embedding Models</span>
           </h3>
           <p className="text-xs text-slate-400 mt-1">
-            Running natively on the Intel NPU (/dev/accel/accel0). The default BGE Base produces 768-dimensional vectors aligned with the Qdrant index without consuming GPU VRAM.
+            Running natively on the Intel NPU via OpenVINO. The default BGE Base produces 768-dimensional vectors aligned with the Qdrant index without consuming GPU VRAM.
           </p>
         </div>
 
@@ -396,7 +395,7 @@ export const ModelManagerView: React.FC<ModelManagerViewProps> = ({
                   </span>
                 </div>
                 <div className="text-xs text-purple-300 mt-0.5">
-                  Downloading Hugging Face weights and compiling onto Intel NPU (/dev/accel/accel0)...
+                  Downloading Hugging Face weights and compiling onto Intel NPU...
                 </div>
               </div>
             </div>

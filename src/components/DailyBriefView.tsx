@@ -280,7 +280,7 @@ export const DailyBriefView: React.FC<DailyBriefViewProps> = ({
             <span>Sources ground verified against live Qdrant collection payloads.</span>
             <span className="flex items-center gap-1 text-slate-400">
               <Clock className="w-3.5 h-3.5" />
-              Automated systemd timer: <code>brief/brief.py</code>
+              Automated Windows background sync: <code>rss\sync_freshrss.py</code>
             </span>
           </div>
         </div>

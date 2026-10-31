@@ -5,7 +5,7 @@ import {
   QueryStats,
   SystemService
 } from '../types';
-import { DEFAULT_SYSTEMD_SERVICES } from '../constants/models';
+import { DEFAULT_WINDOWS_SERVICES } from '../constants/models';
 import {
   buildContext,
   getContextStats,
@@ -17,7 +17,7 @@ import {
 
 export class K13Client {
   private config: ClusterConfig;
-  private services: SystemService[] = [...DEFAULT_SYSTEMD_SERVICES];
+  private services: SystemService[] = [...DEFAULT_WINDOWS_SERVICES];
   private switchStatus: { state: 'idle' | 'loading' | 'error'; model?: string; error?: string; stage?: string; elapsedSeconds?: number } = { state: 'idle' };
   private embedSwitchStatus: { state: 'idle' | 'loading' | 'error'; model?: string; error?: string; stage?: string; elapsedSeconds?: number } = { state: 'idle' };
 
@@ -511,7 +511,7 @@ export class K13Client {
     } catch (err: any) {
       // If live chat failed, display clear error message with context summary
       rawResponse = `⚠️ Connection to OpenVINO Inference Server (:11434) failed: ${err.message || err}.\n\n` +
-        `Ensure \`k13-openvino.service\` is active on your server (\`./scripts/k13ctl.sh status\`).\n` +
+        `Ensure the OpenVINO service is active on your host (\`.\\scripts\\windows\\k13ctl.ps1 status\`).\n` +
         (docs.length > 0 ? `\nRetrieved ${docs.length} excerpts from Qdrant successfully.` : '');
       onChunk(rawResponse, false);
     }
@@ -652,7 +652,7 @@ export class K13Client {
         }
       }
 
-      const timeoutMsg = 'Model switch reached the 60-minute safety ceiling. Check server journal logs: journalctl -u k13-openvino.service -n 100.';
+      const timeoutMsg = 'Model switch reached the 60-minute safety ceiling. Check server logs: .\\scripts\\windows\\k13ctl.ps1 logs openvino.';
       this.switchStatus = { state: 'error', model: this.config.currentLlmModel, error: timeoutMsg };
       return { success: false, error: timeoutMsg };
     } catch (e: any) {
@@ -755,7 +755,7 @@ export class K13Client {
   }
 
   /**
-   * Fetch live systemd services status from server API
+   * Fetch live Windows services status from server API
    */
   public async fetchServices(): Promise<SystemService[]> {
     try {
@@ -774,7 +774,7 @@ export class K13Client {
   }
 
   /**
-   * Control systemd services (start, stop, restart) via server API
+   * Control Windows services (start, stop, restart) via server API
    */
   public async controlService(serviceId: string, action: 'start' | 'stop' | 'restart'): Promise<{ success: boolean; error?: string }> {
     // Immediately mark as restarting/transitioning in UI
@@ -810,7 +810,7 @@ export class K13Client {
   }
 
   /**
-   * Fetch real journalctl logs for a service
+   * Fetch real service logs from logs/<service>.log
    */
   public async fetchServiceLogs(serviceId: string): Promise<string[]> {
     try {
@@ -826,7 +826,7 @@ export class K13Client {
     } catch {
       // Fallback
     }
-    return [`[${new Date().toLocaleTimeString()}] Live journal logs unavailable from /api/services/logs.`];
+    return [`[${new Date().toLocaleTimeString()}] Live service logs unavailable from /api/services/logs.`];
   }
 
   /**

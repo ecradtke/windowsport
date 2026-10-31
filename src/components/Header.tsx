@@ -1,5 +1,5 @@
 import React from 'react';
-import { Cpu, Zap, Database, Server, FileText, Settings, Radio } from 'lucide-react';
+import { Cpu, Zap, Server, FileText, Settings, Radio } from 'lucide-react';
 import { ClusterConfig } from '../types';
 
 interface HeaderProps {
@@ -32,11 +32,11 @@ export const Header: React.FC<HeaderProps> = ({
                   K13 AI Hub
                 </span>
                 <span className="text-[10px] uppercase tracking-wider font-semibold px-2 py-0.5 rounded-full bg-sky-950/80 text-sky-300 border border-sky-800/50">
-                  Ubuntu Server
+                  Windows Native
                 </span>
               </div>
               <p className="text-xs text-slate-400 hidden sm:block">
-                Native OpenVINO • GPU LLM + NPU Embeddings
+                Native IPEX-LLM & OpenVINO • Arc GPU LLM + NPU Embeddings
               </p>
             </div>
           </div>
@@ -109,7 +109,7 @@ export const Header: React.FC<HeaderProps> = ({
             {config.llmHardware === 'CPU' ? (
               <button
                 onClick={onReloadGpu}
-                title="LLM is currently running on CPU fallback! Click to reload on Intel GPU."
+                title="LLM is currently running on CPU fallback! Click to reload on Intel Arc GPU."
                 className="flex items-center gap-1.5 text-xs bg-amber-950/80 border border-amber-600/50 text-amber-300 px-2.5 py-1 rounded-md hover:bg-amber-900/60 transition"
               >
                 <Zap className="w-3.5 h-3.5 text-amber-400" />

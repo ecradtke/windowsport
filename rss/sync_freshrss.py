@@ -45,8 +45,6 @@ logger = logging.getLogger("k13-rss-sync")
 def _load_env_file():
     candidates = [
         os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env"),
-        "/opt/fetch42/.env",
-        "/opt/k13/.env",
         ".env"
     ]
     for path in candidates:

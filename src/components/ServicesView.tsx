@@ -5,14 +5,9 @@ import {
   Square,
   RotateCw,
   Terminal,
-  Activity,
   CheckCircle,
   AlertCircle,
-  Clock,
-  HardDrive,
-  RefreshCw,
-  Cpu,
-  Layers
+  RefreshCw
 } from 'lucide-react';
 import { SystemService } from '../types';
 
@@ -53,7 +48,7 @@ export const ServicesView: React.FC<ServicesViewProps> = ({
     };
   }>({ running: false });
 
-  // Fetch real journalctl logs for selected service
+  // Fetch real service logs
   const loadLogs = useCallback(async (svcId: string) => {
     if (!onFetchLogs) return;
     setLogsLoading(true);
@@ -128,10 +123,10 @@ export const ServicesView: React.FC<ServicesViewProps> = ({
         <div>
           <h2 className="text-xl sm:text-2xl font-bold bg-gradient-to-r from-sky-400 via-indigo-300 to-purple-400 bg-clip-text text-transparent flex items-center gap-2">
             <Server className="w-6 h-6 text-sky-400" />
-            <span>Ubuntu Systemd Services & Cluster Control (k13ctl.sh)</span>
+            <span>Windows Services & Cluster Control (k13ctl.ps1)</span>
           </h2>
           <p className="text-sm text-slate-400 mt-1">
-            Native Linux systemd daemons running on this host without Docker or virtualization layers.
+            Native Windows background processes managed via PowerShell without Docker or virtualization layers.
           </p>
         </div>
 
@@ -141,7 +136,7 @@ export const ServicesView: React.FC<ServicesViewProps> = ({
           className="flex items-center gap-2 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs shadow-lg shadow-indigo-600/30 transition disabled:opacity-50"
         >
           {testOutput.running ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Terminal className="w-4 h-4" />}
-          <span>{testOutput.running ? 'Running Tests…' : 'Run Live Smoke Test (k13ctl test)'}</span>
+          <span>{testOutput.running ? 'Running Tests…' : 'Run Live Smoke Test (k13ctl.ps1 test)'}</span>
         </button>
       </div>
 
@@ -166,7 +161,7 @@ export const ServicesView: React.FC<ServicesViewProps> = ({
           <div className="text-xs font-bold text-slate-300 font-sans flex items-center justify-between">
             <div className="flex items-center gap-2">
               <CheckCircle className="w-4 h-4 text-emerald-400" />
-              <span>Live Smoke Test Completed (k13ctl.sh test)</span>
+              <span>Live Smoke Test Completed (k13ctl.ps1 test)</span>
             </div>
             {testOutput.result.durationSeconds !== undefined && (
               <span className="text-slate-400 text-[11px] font-mono">
@@ -270,7 +265,7 @@ export const ServicesView: React.FC<ServicesViewProps> = ({
                   <button
                     onClick={() => handleControl(svc.id, 'restart')}
                     disabled={isRestarting}
-                    title="Restart service (k13ctl restart)"
+                    title="Restart service (k13ctl.ps1 restart)"
                     className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-slate-300 hover:text-white transition flex items-center gap-1 text-xs"
                   >
                     <RotateCw className={`w-3.5 h-3.5 ${isRestarting ? 'animate-spin text-sky-400' : ''}`} />
@@ -280,7 +275,7 @@ export const ServicesView: React.FC<ServicesViewProps> = ({
                     <button
                       onClick={() => handleControl(svc.id, 'stop')}
                       disabled={isRestarting}
-                      title="Stop service (k13ctl stop)"
+                      title="Stop service (k13ctl.ps1 stop)"
                       className="p-1.5 rounded-lg bg-slate-800 hover:bg-red-900/60 disabled:opacity-50 text-slate-300 hover:text-red-300 transition flex items-center gap-1 text-xs"
                     >
                       <Square className="w-3.5 h-3.5" />
@@ -290,7 +285,7 @@ export const ServicesView: React.FC<ServicesViewProps> = ({
                     <button
                       onClick={() => handleControl(svc.id, 'start')}
                       disabled={isRestarting}
-                      title="Start service (k13ctl start)"
+                      title="Start service (k13ctl.ps1 start)"
                       className="p-1.5 rounded-lg bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 text-white transition flex items-center gap-1 text-xs"
                     >
                       <Play className="w-3.5 h-3.5" />
@@ -304,13 +299,13 @@ export const ServicesView: React.FC<ServicesViewProps> = ({
         })}
       </div>
 
-      {/* Terminal Journalctl Viewer */}
+      {/* Terminal Log Viewer */}
       <div className="rounded-2xl bg-slate-950 border border-slate-800 overflow-hidden shadow-2xl">
         <div className="px-4 py-3 bg-slate-900/80 border-b border-slate-800 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Terminal className="w-4 h-4 text-emerald-400" />
             <span className="font-mono text-xs text-slate-300">
-              journalctl -fu {services.find(s => s.id === selectedLogService)?.unit || 'k13-openvino.service'} -n 100
+              Get-Content .\logs\{selectedLogService}.log -Tail 100 -Wait
             </span>
             {logsLoading && <RefreshCw className="w-3 h-3 animate-spin text-sky-400 ml-2" />}
           </div>
@@ -349,7 +344,7 @@ export const ServicesView: React.FC<ServicesViewProps> = ({
                     ? 'text-amber-300'
                     : line.includes('INFO')
                     ? 'text-sky-300'
-                    : line.includes('[✓]') || line.includes('Started') || line.includes('ready')
+                    : line.includes('[✓]') || line.includes('[OK]') || line.includes('Started') || line.includes('ready')
                     ? 'text-emerald-400'
                     : 'text-slate-300'
                 }>
@@ -359,7 +354,7 @@ export const ServicesView: React.FC<ServicesViewProps> = ({
             ))
           ) : (
             <div className="text-slate-500 italic py-8 text-center">
-              {logsLoading ? 'Streaming systemd journal output…' : 'No log lines captured yet.'}
+              {logsLoading ? 'Streaming service log output…' : 'No log lines captured yet.'}
             </div>
           )}
         </div>

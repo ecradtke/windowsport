@@ -8,6 +8,7 @@
 #   .\k13ctl.ps1 logs {openvino|qdrant|web|rss}
 #   .\k13ctl.ps1 check-hardware
 #   .\k13ctl.ps1 fix-transformers
+#   .\k13ctl.ps1 install-qdrant-ui
 #   .\k13ctl.ps1 test
 # ==============================================================================
 param(
@@ -89,7 +90,7 @@ function Start-K13Service($svc) {
             $runner = Join-Path $BaseDir "scripts\windows\run-rss-sync.ps1"
             $p = Start-Process powershell.exe -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$runner`"" -RedirectStandardOutput $logFile -RedirectStandardError (Join-Path $LogDir "rss_err.log") -PassThru -WindowStyle Hidden
             Save-ServicePid "rss" $p.Id
-            Write-Host "[OK] RSS Sync job started (PID: $($p.Id))" -ForegroundColor Green
+            Write-Host "[OK] RSS Sync service started (PID: $($p.Id))" -ForegroundColor Green
         }
         default {
             Write-Host "Unknown service: $svc" -ForegroundColor Red
@@ -101,6 +102,8 @@ function Stop-K13Service($svc) {
     $id = Get-ServicePid $svc
     if ($id) {
         Write-Host "[-] Stopping $svc (PID: $id)..." -ForegroundColor Yellow
+        # Terminate entire process tree on Windows so child python/node/qdrant processes also stop cleanly
+        & taskkill.exe /PID $id /T /F 2>$null | Out-Null
         Stop-Process -Id $id -Force -ErrorAction SilentlyContinue
         Remove-ServicePid $svc
         Write-Host "[OK] $svc stopped." -ForegroundColor Green
@@ -121,7 +124,7 @@ switch ($Command.ToLower()) {
         Write-Host "  K13 AI Hub - Windows Services Status                    " -ForegroundColor Cyan
         Write-Host "==========================================================" -ForegroundColor Cyan
 
-        $services = @("qdrant", "openvino", "web")
+        $services = @("qdrant", "openvino", "web", "rss")
         foreach ($s in $services) {
             $pidVal = Get-ServicePid $s
             $stat = if ($pidVal) { "[ACTIVE] PID: $pidVal" } else { "[STOPPED]" }
@@ -162,6 +165,8 @@ switch ($Command.ToLower()) {
             Start-K13Service "openvino"
             Start-Sleep -Seconds 1
             Start-K13Service "web"
+            Start-Sleep -Seconds 1
+            Start-K13Service "rss"
         } else {
             Start-K13Service $Target
         }
@@ -169,10 +174,10 @@ switch ($Command.ToLower()) {
 
     "stop" {
         if ($Target -eq "all") {
+            Stop-K13Service "rss"
             Stop-K13Service "web"
             Stop-K13Service "openvino"
             Stop-K13Service "qdrant"
-            Stop-K13Service "rss"
         } else {
             Stop-K13Service $Target
         }

@@ -12,8 +12,25 @@ if (-not (Test-Path $QdrantBin)) {
     exit 1
 }
 
-$StorageDir = Join-Path $BaseDir "data\qdrant\storage"
-$SnapshotsDir = Join-Path $BaseDir "data\qdrant\snapshots"
+# Load .env if present
+$EnvFile = Join-Path $BaseDir ".env"
+if (Test-Path $EnvFile) {
+    Get-Content $EnvFile | ForEach-Object {
+        $line = $_.Trim()
+        if ($line -and -not $line.StartsWith("#") -and $line.Contains("=")) {
+            $parts = $line.Split("=", 2)
+            $k = $parts[0].Trim()
+            $v = $parts[1].Trim().Trim('"').Trim("'")
+            if ($k -and $v) {
+                [System.Environment]::SetEnvironmentVariable($k, $v, "Process")
+            }
+        }
+    }
+}
+
+$DataRoot = if ($env:K13_DATA_DIR) { $env:K13_DATA_DIR } else { Join-Path $BaseDir "data" }
+$StorageDir = if ($env:QDRANT_STORAGE_DIR) { $env:QDRANT_STORAGE_DIR } else { Join-Path $DataRoot "qdrant\storage" }
+$SnapshotsDir = if ($env:QDRANT_SNAPSHOTS_DIR) { $env:QDRANT_SNAPSHOTS_DIR } else { Join-Path $DataRoot "qdrant\snapshots" }
 $StaticDir = Join-Path $BaseDir "bin\qdrant\static"
 
 if (-not (Test-Path $StorageDir)) { New-Item -ItemType Directory -Path $StorageDir -Force | Out-Null }
@@ -48,23 +65,8 @@ if (-not (Test-Path $IndexHtml)) {
     }
 }
 
-$Port = "6333"
-$HostBind = "0.0.0.0"
-
-$EnvFile = Join-Path $BaseDir ".env"
-if (Test-Path $EnvFile) {
-    Get-Content $EnvFile | ForEach-Object {
-        $line = $_.Trim()
-        if ($line.StartsWith("QDRANT_PORT=")) {
-            $val = $line.Split("=", 2)[1].Trim().Trim('"').Trim("'")
-            if ($val -and ($val -match '^\d+$')) { $Port = $val }
-        }
-        if ($line.StartsWith("QDRANT_BIND=")) {
-            $val = $line.Split("=", 2)[1].Trim().Trim('"').Trim("'")
-            if ($val) { $HostBind = $val }
-        }
-    }
-}
+$Port = if ($env:QDRANT_PORT -and ($env:QDRANT_PORT -match '^\d+$')) { $env:QDRANT_PORT } else { "6333" }
+$HostBind = if ($env:QDRANT_BIND) { $env:QDRANT_BIND } else { "0.0.0.0" }
 
 $env:QDRANT__STORAGE__STORAGE_PATH = $StorageDir
 $env:QDRANT__STORAGE__SNAPSHOTS_PATH = $SnapshotsDir

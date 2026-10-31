@@ -32,7 +32,7 @@ function envReaderPlugin(): Plugin {
         const key = line.slice(0, eqIdx).trim();
         let val = line.slice(eqIdx + 1).trim();
 
-        // Strip quotes matching _lib.sh behavior
+        // Strip quotes
         if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
           val = val.slice(1, -1);
         }
@@ -86,19 +86,19 @@ interface ServiceDefinition {
 const SYSTEM_SERVICES: ServiceDefinition[] = [
   {
     id: 'openvino',
-    name: 'OpenVINO Inference Server',
-    unit: 'k13-openvino.service',
-    role: 'FastAPI server hosting openvino_genai LLM on GPU and BGE embeddings on NPU',
+    name: 'IPEX-LLM Inference Server',
+    unit: 'run-openvino.ps1',
+    role: 'FastAPI server hosting IPEX-LLM on Intel Arc GPU (XPU) and BGE embeddings on Intel NPU',
     port: 11434,
-    hardware: 'Intel GPU (/dev/dri) & Intel NPU (/dev/accel/accel0)',
+    hardware: 'Intel Arc GPU (XPU) & Intel NPU',
     defaultMemory: 'GPU VRAM / System RAM',
     probeUrl: 'http://127.0.0.1:11434/healthz'
   },
   {
     id: 'qdrant',
     name: 'Qdrant Vector Database',
-    unit: 'k13-qdrant.service',
-    role: 'Native vector database serving 768-dim cosine index for news collections',
+    unit: 'run-qdrant.ps1',
+    role: 'Native Windows vector database (qdrant.exe) serving 768-dim cosine index for news collections',
     port: 6333,
     hardware: 'Intel CPU',
     defaultMemory: 'Vector Index',
@@ -107,7 +107,7 @@ const SYSTEM_SERVICES: ServiceDefinition[] = [
   {
     id: 'web',
     name: 'K13 Web Portal',
-    unit: 'k13-web.service',
+    unit: 'run-web.ps1',
     role: 'React web interface for vector intelligence, chat, telemetry & model switching',
     port: 3000,
     hardware: 'Web Server',
@@ -117,72 +117,67 @@ const SYSTEM_SERVICES: ServiceDefinition[] = [
   {
     id: 'rss',
     name: 'FreshRSS Vector Synchronizer',
-    unit: 'k13-rss-sync.timer',
-    role: 'Scheduled timer running every 5 min (FreshRSS NAS -> PostgreSQL -> NPU BGE -> Qdrant)',
+    unit: 'run-rss-sync.ps1',
+    role: 'Scheduled background sync running every 5 min (FreshRSS NAS -> PostgreSQL -> NPU BGE -> Qdrant)',
     port: 'Every 5m',
     hardware: 'Intel NPU',
     defaultMemory: 'NPU Embeddings'
   }
 ];
 
+function isPidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e: any) {
+    return e?.code === 'EPERM';
+  }
+}
+
+function formatDuration(diffSec: number): string {
+  if (diffSec < 60) return `${Math.max(0, diffSec)}s`;
+  if (diffSec < 3600) return `${Math.floor(diffSec / 60)}m`;
+  return `${Math.floor(diffSec / 3600)}h ${Math.floor((diffSec % 3600) / 60)}m`;
+}
+
 function servicesManagerPlugin(): Plugin {
-  // Query status of a single service unit
+  // Query status of a single Windows service runner via PID file and HTTP probe
   const inspectService = async (svc: ServiceDefinition) => {
     let status: 'active' | 'inactive' | 'failed' | 'restarting' = 'inactive';
-    let enabled = true;
-    let uptime = 'Unknown';
-    let memory = svc.defaultMemory;
+    const enabled = true;
+    let uptime = 'Stopped';
+    const memory = svc.defaultMemory;
 
-    try {
-      // Query systemctl is-active
-      const { stdout: activeOut } = await execAsync(`systemctl is-active ${svc.unit}`).catch(e => ({ stdout: e.stdout || 'inactive' }));
-      const act = (activeOut || '').trim();
-      if (act === 'active') status = 'active';
-      else if (act === 'failed') status = 'failed';
-      else if (act === 'activating' || act === 'reloading') status = 'restarting';
-      else status = 'inactive';
-
-      // Query systemctl is-enabled
-      const { stdout: enOut } = await execAsync(`systemctl is-enabled ${svc.unit}`).catch(() => ({ stdout: 'unknown' }));
-      enabled = (enOut || '').trim() === 'enabled';
-
-      // Query show properties for uptime & memory
-      const { stdout: showOut } = await execAsync(`systemctl show ${svc.unit} --property=ActiveEnterTimestamp,MemoryCurrent`).catch(() => ({ stdout: '' }));
-      for (const line of (showOut || '').split('\n')) {
-        if (line.startsWith('ActiveEnterTimestamp=') && status === 'active') {
-          const rawTs = line.replace('ActiveEnterTimestamp=', '').trim();
-          if (rawTs) {
-            const date = new Date(rawTs);
-            if (!isNaN(date.getTime())) {
-              const diffSec = Math.floor((Date.now() - date.getTime()) / 1000);
-              if (diffSec < 60) uptime = `${diffSec}s`;
-              else if (diffSec < 3600) uptime = `${Math.floor(diffSec / 60)}m`;
-              else uptime = `${Math.floor(diffSec / 3600)}h ${Math.floor((diffSec % 3600) / 60)}m`;
-            }
-          }
-        } else if (line.startsWith('MemoryCurrent=')) {
-          const bytes = parseInt(line.replace('MemoryCurrent=', '').trim(), 10);
-          if (!isNaN(bytes) && bytes > 0 && bytes < 1e14) {
-            if (bytes > 1024 * 1024 * 1024) memory = `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
-            else memory = `${Math.round(bytes / (1024 * 1024))} MB`;
-          }
+    const pidPath = path.resolve(process.cwd(), 'data', 'pids', `${svc.id}.pid`);
+    if (fs.existsSync(pidPath)) {
+      try {
+        const rawPid = fs.readFileSync(pidPath, 'utf-8').trim();
+        const pidNum = parseInt(rawPid, 10);
+        if (!isNaN(pidNum) && pidNum > 0 && isPidAlive(pidNum)) {
+          status = 'active';
+          const stat = fs.statSync(pidPath);
+          const diffSec = Math.floor((Date.now() - stat.mtimeMs) / 1000);
+          uptime = `${formatDuration(diffSec)} (PID ${pidNum})`;
         }
+      } catch {
+        // Ignore pid read errors
       }
-    } catch {
-      // systemctl not available (e.g. preview environment); probe HTTP fallback
-      if (svc.probeUrl) {
-        try {
-          const res = await fetch(svc.probeUrl, { signal: AbortSignal.timeout(1500) });
-          if (res.ok || (res.status >= 200 && res.status < 500)) {
-            status = 'active';
+    }
+
+    if (svc.probeUrl) {
+      try {
+        const res = await fetch(svc.probeUrl, { signal: AbortSignal.timeout(1500) });
+        if (res.ok || (res.status >= 200 && res.status < 500)) {
+          status = 'active';
+          if (uptime === 'Stopped') {
             uptime = 'Running';
           }
-        } catch {
-          status = 'inactive';
         }
-      } else {
-        status = 'active';
-        uptime = 'Active Timer';
+      } catch {
+        if (status === 'active') {
+          // Process is alive (e.g. still loading LLM weights onto XPU)
+          uptime = `Starting / Loading (${uptime})`;
+        }
       }
     }
 
@@ -194,7 +189,7 @@ function servicesManagerPlugin(): Plugin {
       port: svc.port,
       status,
       enabled,
-      uptime: uptime === 'Unknown' && status === 'active' ? 'Active' : uptime,
+      uptime,
       memory,
       hardware: svc.hardware
     };
@@ -232,32 +227,15 @@ function servicesManagerPlugin(): Plugin {
           return;
         }
 
-        const targetUnit = svc.unit;
+        const psScript = path.resolve(process.cwd(), 'scripts', 'windows', 'k13ctl.ps1');
         let commandOutput = '';
-        try {
-          if (process.platform === 'win32') {
-            const psScript = path.resolve(process.cwd(), 'scripts', 'windows', 'k13ctl.ps1');
-            if (fs.existsSync(psScript)) {
-              const { stdout, stderr } = await execAsync(`powershell -NoProfile -ExecutionPolicy Bypass -File "${psScript}" ${action} ${service}`).catch(e => ({ stdout: '', stderr: e.message }));
-              commandOutput = (stdout || stderr || '').trim();
-            } else {
-              commandOutput = `Windows script not found at ${psScript}`;
-            }
-          } else {
-            const { stdout, stderr } = await execAsync(`sudo systemctl ${action} ${targetUnit}`).catch(async () => {
-              return await execAsync(`systemctl ${action} ${targetUnit}`);
-            });
-            commandOutput = (stdout || stderr || '').trim();
-
-            // If restarting or starting RSS on Linux, also execute one-shot sync service in background
-            if (service === 'rss' && (action === 'restart' || action === 'start')) {
-              execAsync(`sudo systemctl start k13-rss-sync.service`).catch(() => {
-                execAsync(`systemctl start k13-rss-sync.service`).catch(() => {});
-              });
-            }
-          }
-        } catch (execErr: any) {
-          commandOutput = execErr?.message || String(execErr);
+        if (fs.existsSync(psScript)) {
+          const { stdout, stderr } = await execAsync(
+            `powershell -NoProfile -ExecutionPolicy Bypass -File "${psScript}" ${action} ${service}`
+          ).catch(e => ({ stdout: '', stderr: e.message }));
+          commandOutput = (stdout || stderr || '').trim();
+        } else {
+          commandOutput = `Windows control script not found at ${psScript}`;
         }
 
         // Return refreshed status for that service
@@ -267,7 +245,7 @@ function servicesManagerPlugin(): Plugin {
           success: true,
           action,
           service: svc.id,
-          unit: targetUnit,
+          unit: svc.unit,
           output: commandOutput,
           serviceStatus: updated
         }));
@@ -282,37 +260,25 @@ function servicesManagerPlugin(): Plugin {
     const parsedUrl = url.parse(req.url, true);
     const serviceId = (parsedUrl.query?.service as string) || 'openvino';
     const svc = SYSTEM_SERVICES.find(s => s.id === serviceId) || SYSTEM_SERVICES[0];
-    const unit = svc.id === 'rss' ? 'k13-rss-sync.service' : svc.unit;
     const lines: string[] = [];
 
-    // 1. Try journalctl
-    try {
-      const { stdout } = await execAsync(`journalctl -u ${unit} -n 100 --no-pager`).catch(async () => {
-        return await execAsync(`sudo -n journalctl -u ${unit} -n 100 --no-pager`);
-      });
-      if (stdout && stdout.trim()) {
-        const rawLines = stdout.trim().split('\n');
-        for (const l of rawLines) {
-          if (l.trim()) lines.push(l);
-        }
-      }
-    } catch {}
+    // 1. Read logs/<service>.log and logs/<service>_err.log
+    const logFile = path.resolve(process.cwd(), 'logs', `${svc.id}.log`);
+    const errFile = path.resolve(process.cwd(), 'logs', `${svc.id}_err.log`);
 
-    // 2. Fallback to logs/<service>.log if journalctl was empty
-    if (lines.length === 0) {
-      const logFile = path.resolve(process.cwd(), `logs/${serviceId}.log`);
-      if (fs.existsSync(logFile)) {
+    for (const file of [logFile, errFile]) {
+      if (fs.existsSync(file)) {
         try {
-          const content = fs.readFileSync(logFile, 'utf-8');
-          const fileLines = content.trim().split('\n').filter(Boolean);
+          const content = fs.readFileSync(file, 'utf-8');
+          const fileLines = content.split(/\r?\n/).filter(l => l.trim().length > 0);
           lines.push(...fileLines.slice(-100));
-        } catch {}
+        } catch { }
       }
     }
 
-    // 3. Informational status line if journal is empty
+    // 2. Informational status line if log file is empty
     if (lines.length === 0) {
-      lines.push(`[${new Date().toLocaleTimeString()}] journalctl query: No logs available for unit '${unit}'.`);
+      lines.push(`[${new Date().toLocaleTimeString()}] No log entries written yet in logs\\${svc.id}.log.`);
       if (svc.probeUrl) {
         try {
           const probeRes = await fetch(svc.probeUrl, { signal: AbortSignal.timeout(2000) });
@@ -321,11 +287,11 @@ function servicesManagerPlugin(): Plugin {
           lines.push(`[!] Live probe ${svc.probeUrl}: ${probeErr.message}`);
         }
       }
-      lines.push(`To stream real-time logs in your terminal, run: ./scripts/k13ctl.sh logs ${svc.id}`);
+      lines.push(`To stream real-time logs in PowerShell, run: .\\scripts\\windows\\k13ctl.ps1 logs ${svc.id}`);
     }
 
     res.setHeader('Content-Type', 'application/json');
-    res.end(JSON.stringify({ service: svc.id, unit, logs: lines }));
+    res.end(JSON.stringify({ service: svc.id, unit: svc.unit, logs: lines.slice(-100) }));
   };
 
   const handleSmokeTest = async (_req: any, res: any) => {
@@ -351,7 +317,7 @@ function servicesManagerPlugin(): Plugin {
           embedDims = vec.length;
         }
       }
-    } catch {}
+    } catch { }
 
     // Test 2: Chat LLM
     try {
@@ -366,7 +332,7 @@ function servicesManagerPlugin(): Plugin {
         chatResponse = (genData.response || '').trim() || 'ready (GPU online)';
         chatSuccess = true;
       }
-    } catch {}
+    } catch { }
 
     const totalSeconds = (performance.now() - t0) / 1000;
 

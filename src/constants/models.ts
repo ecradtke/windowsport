@@ -30,7 +30,7 @@ export const CURATED_LLM_MODELS: LLMModelInfo[] = [
     params: '7B',
     size: '~4.5 GB',
     category: 'Coding',
-    description: 'Premier code generation model. Excels at multi-file repository understanding, bug fixes, terminal bash scripting, and refactoring with IPEX-LLM.',
+    description: 'Premier code generation model. Excels at multi-file repository understanding, bug fixes, PowerShell scripting, and refactoring with IPEX-LLM.',
     recommended: true,
     contextWindow: '128k'
   },
@@ -161,8 +161,8 @@ export const CURATED_EMBED_MODELS: EmbedModelInfo[] = [
     name: 'BGE Base ⭐',
     dims: 768,
     size: '~430 MB',
-    description: 'Standard 768-dim embeddings running natively on Intel NPU (/dev/accel/accel0). Default collection format.',
-    device: 'NPU (Intel Lunar Lake / Meteor Lake)',
+    description: 'Standard 768-dim embeddings running natively on the Intel NPU via OpenVINO. Default collection format.',
+    device: 'Intel NPU (Lunar Lake / Meteor Lake)',
     default: true,
     recommended: true
   },
@@ -172,29 +172,29 @@ export const CURATED_EMBED_MODELS: EmbedModelInfo[] = [
     dims: 384,
     size: '~90 MB',
     description: 'Ultra-fast 384-dim embeddings. Warning: Switching requires re-indexing Qdrant collections.',
-    device: 'NPU (Static shape 1x512)',
+    device: 'Intel NPU (Static shape 1x512)',
     recommended: false
   }
 ];
 
-export const DEFAULT_SYSTEMD_SERVICES: SystemService[] = [
+export const DEFAULT_WINDOWS_SERVICES: SystemService[] = [
   {
     id: 'openvino',
     name: 'IPEX-LLM Inference Server',
-    unit: 'k13-openvino.service',
-    role: 'FastAPI server hosting IPEX-LLM (Intel Extension for PyTorch) on Intel Arc GPU / XPU and BGE embeddings on NPU',
+    unit: 'run-openvino.ps1',
+    role: 'FastAPI server hosting IPEX-LLM (Intel Extension for PyTorch) on Intel Arc GPU (XPU) and BGE embeddings on Intel NPU',
     port: 11434,
     status: 'active',
     enabled: true,
     uptime: 'Running on :11434',
     memory: 'Intel XPU / VRAM',
-    hardware: 'Intel GPU / XPU (/dev/dri) & Intel NPU (/dev/accel/accel0)'
+    hardware: 'Intel Arc GPU (XPU) & Intel NPU'
   },
   {
     id: 'qdrant',
     name: 'Qdrant Vector Database',
-    unit: 'k13-qdrant.service',
-    role: 'Native vector database serving 768-dim cosine index for news and audio collections',
+    unit: 'run-qdrant.ps1',
+    role: 'Native Windows vector database (qdrant.exe) serving 768-dim cosine index for news and audio collections',
     port: 6333,
     status: 'active',
     enabled: true,
@@ -205,7 +205,7 @@ export const DEFAULT_SYSTEMD_SERVICES: SystemService[] = [
   {
     id: 'web',
     name: 'K13 Web Portal',
-    unit: 'k13-web.service',
+    unit: 'run-web.ps1',
     role: 'React web interface for vector intelligence, chat, telemetry & model switching',
     port: 3000,
     status: 'active',
@@ -217,12 +217,12 @@ export const DEFAULT_SYSTEMD_SERVICES: SystemService[] = [
   {
     id: 'rss',
     name: 'FreshRSS Vector Synchronizer',
-    unit: 'k13-rss-sync.timer',
-    role: 'Scheduled timer running every 5 min (FreshRSS NAS -> PostgreSQL -> NPU BGE -> Qdrant)',
+    unit: 'run-rss-sync.ps1',
+    role: 'Scheduled background sync running every 5 min (FreshRSS NAS -> PostgreSQL -> NPU BGE -> Qdrant)',
     port: 'Every 5m',
     status: 'active',
     enabled: true,
-    uptime: 'Active Timer',
+    uptime: 'Active Sync Loop',
     memory: 'NPU Embeddings',
     hardware: 'Intel NPU'
   }

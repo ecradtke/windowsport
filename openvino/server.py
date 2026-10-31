@@ -36,10 +36,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] ipex
 logger = logging.getLogger("ipex-server")
 
 # Hardware & Directory Configuration
-if os.name == "nt":
-    default_models_dir = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "k13", "models")
-else:
-    default_models_dir = "/var/lib/k13/openvino/models"
+default_models_dir = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "k13", "models")
 MODELS_DIR = os.getenv("MODELS_DIR", default_models_dir)
 os.makedirs(MODELS_DIR, exist_ok=True)
 
@@ -94,11 +91,7 @@ def detect_xpu_available() -> bool:
             if count > 0:
                 return True
             else:
-                hint = (
-                    "Ensure Intel Arc Graphics WHQL driver is installed on Windows 11."
-                    if os.name == "nt" else
-                    "Install with: sudo apt install -y libze1 libze-intel-gpu1 intel-opencl-icd && sudo usermod -aG render,video $USER"
-                )
+                hint = "Ensure Intel Arc Graphics WHQL driver is installed on Windows."
                 logger.warning(
                     f"torch.xpu.is_available() is True, but torch.xpu.device_count() is 0. "
                     f"Intel Level Zero runtime cannot see the Arc GPU. {hint}"
@@ -252,11 +245,7 @@ def load_llm(model_id: str):
                 target_dev = "cpu"
             elif not xpu_ready:
                 if not SWITCH_ALLOW_CPU:
-                    fix_hint = (
-                        "Install Intel Graphics Driver for Windows 11 (Level Zero / SYCL supported natively)"
-                        if os.name == "nt" else
-                        "sudo apt install -y libze1 libze-intel-gpu1 intel-opencl-icd && sudo usermod -aG render,video $USER"
-                    )
+                    fix_hint = "Install Intel Graphics Driver for Windows (Level Zero / SYCL supported natively)"
                     raise RuntimeError(
                         f"Inference device is configured as '{INFERENCE_DEVICE}', but Intel Arc GPU (XPU) device count is 0. "
                         f"{fix_hint}"
@@ -404,7 +393,7 @@ def load_llm(model_id: str):
                     raise RuntimeError(
                         f"IPEX-LLM is not installed in the server Python environment, preventing 4-bit INT4 quantization for '{model_id}'. "
                         "Unquantized FP16/FP32 loading on CPU was blocked to protect the system from an out-of-memory crash. "
-                        "Please run on the host: ./scripts/k13ctl.sh install-ipex"
+                        "Please run on the host: .\\scripts\\windows\\install.ps1"
                     )
 
             llm_model = loaded_model
