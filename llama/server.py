@@ -11,6 +11,7 @@ Provides Ollama-compatible and OpenAI-compatible endpoints on port 11434:
   /v1/chat/completions, /v1/completions, /v1/models, /v1/embeddings
 """
 import os
+import re
 import sys
 import glob
 import time
@@ -22,6 +23,7 @@ import asyncio
 import logging
 import threading
 import subprocess
+from contextlib import asynccontextmanager
 from typing import List, Optional, Dict, Any, Union, Tuple
 
 import requests
@@ -29,7 +31,7 @@ import numpy as np
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 logging.basicConfig(
     level=logging.INFO,
@@ -57,7 +59,7 @@ SWITCH_ALLOW_CPU = os.getenv("SWITCH_ALLOW_CPU", "on").lower() in ("on", "1", "t
 LLM_THINKING = os.getenv("LLM_THINKING", "off").lower() in ("on", "1", "true")
 MAX_NEW_TOKENS = int(os.getenv("MAX_NEW_TOKENS", "2048"))
 LLAMA_NGL = int(os.getenv("LLAMA_NGL", "99"))
-LLAMA_CTX_SIZE = int(os.getenv("LLAMA_CTX_SIZE", "16384"))
+LLAMA_CTX_SIZE = int(os.getenv("LLAMA_CTX_SIZE", "32768"))
 SERVER_HOST = os.getenv("LLAMA_HOST") or os.getenv("SERVER_HOST") or "0.0.0.0"
 SERVER_PORT = int(os.getenv("LLAMA_PORT") or os.getenv("SERVER_PORT") or "11434")
 INTERNAL_LLAMA_PORT = int(os.getenv("LLAMA_INTERNAL_PORT", str(SERVER_PORT + 1)))
@@ -348,6 +350,7 @@ def start_llama_subprocess(gguf_path: str, ngl: int) -> subprocess.Popen:
         "--port", str(INTERNAL_LLAMA_PORT),
         "-ngl", str(ngl),
         "-c", str(LLAMA_CTX_SIZE),
+        "-np", "1",
     ]
 
     logger.info(f"Launching llama.cpp server: {' '.join(cmd)}")
@@ -640,23 +643,8 @@ def load_embed(model_id: str):
 # FastAPI Application & Endpoints
 # ==============================================================================
 
-app = FastAPI(
-    title="K13 llama.cpp Inference Server",
-    description="Native Windows llama.cpp GGUF Server + Hugging Face Vector Embeddings",
-    version="3.0.0",
-)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-
-@app.on_event("startup")
-def startup_event():
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
     def init_background():
         try:
             load_embed(DEFAULT_EMBED_REPO)
@@ -668,12 +656,25 @@ def startup_event():
             logger.warning(f"Initial LLM load deferred or failed: {e}")
 
     threading.Thread(target=init_background, daemon=True).start()
-
-
-@app.on_event("shutdown")
-def shutdown_event():
+    yield
     stop_llama_process()
     stop_embed_process()
+
+
+app = FastAPI(
+    title="K13 llama.cpp Inference Server",
+    description="Native Windows llama.cpp GGUF Server + Intel NPU Vector Embeddings",
+    version="3.0.0",
+    lifespan=lifespan,
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 @app.get("/healthz")
@@ -886,22 +887,18 @@ def extract_content(content_val: Any) -> str:
 
 
 class ChatMessageReq(BaseModel):
+    model_config = ConfigDict(extra="allow")
     role: str
     content: Optional[Union[str, List[Any], Dict[str, Any]]] = ""
 
-    class Config:
-        extra = "allow"
-
 
 class ChatReq(BaseModel):
+    model_config = ConfigDict(extra="allow")
     model: Optional[str] = None
     messages: List[ChatMessageReq]
     stream: Optional[bool] = False
     temperature: Optional[float] = 0.7
     max_tokens: Optional[int] = None
-
-    class Config:
-        extra = "allow"
 
 
 def _ensure_llama_ready():
@@ -917,21 +914,90 @@ def _ensure_llama_ready():
         )
 
 
+def _trim_middle(text: str, target_chars: int) -> str:
+    """Trim the middle of a long RAG prompt so both header instructions and the trailing user question remain intact."""
+    if len(text) <= target_chars or target_chars < 400:
+        return text[: max(target_chars, 200)]
+    keep_head = int(target_chars * 0.75)
+    keep_tail = target_chars - keep_head
+    return text[:keep_head] + "\n\n[... middle RAG context truncated to fit model context window ...]\n\n" + text[-keep_tail:]
+
+
+def _fit_payload_to_context(payload: Dict[str, Any], target_ctx: int) -> Dict[str, Any]:
+    """Ensure prompt + max_tokens fits within target_ctx tokens (~3.2 chars/token)."""
+    msgs = [dict(m) for m in payload.get("messages", [])]
+    max_tok = int(payload.get("max_tokens") or MAX_NEW_TOKENS)
+    if max_tok > target_ctx // 4:
+        max_tok = max(512, target_ctx // 4)
+
+    avail_prompt_tokens = max(1024, target_ctx - max_tok - 512)
+    max_total_chars = int(avail_prompt_tokens * 3.1)
+    total_chars = sum(len(m.get("content", "")) for m in msgs)
+
+    if total_chars > max_total_chars and msgs:
+        longest_idx = max(range(len(msgs)), key=lambda i: len(msgs[i].get("content", "")))
+        other_chars = total_chars - len(msgs[longest_idx].get("content", ""))
+        allowed_for_longest = max(1000, max_total_chars - other_chars)
+        logger.warning(
+            f"Prompt chars ({total_chars}) exceed context budget ({max_total_chars} chars for {target_ctx} ctx); "
+            f"trimming message[{longest_idx}] to {allowed_for_longest} chars."
+        )
+        msgs[longest_idx]["content"] = _trim_middle(msgs[longest_idx].get("content", ""), allowed_for_longest)
+
+    new_payload = dict(payload)
+    new_payload["messages"] = msgs
+    new_payload["max_tokens"] = max_tok
+    return new_payload
+
+
+def _shrink_payload_on_400(payload: Dict[str, Any], err_body: str) -> Dict[str, Any]:
+    """Parse llama-server 400 context overflow error and shrink the longest message to fit."""
+    # Example error: "request (18845 tokens) exceeds the available context size (16384 tokens)"
+    m = re.search(r"request\s*\((\d+)\s*tokens\)\s*exceeds.*?\((\d+)\s*tokens\)", err_body or "", re.IGNORECASE)
+    if m:
+        req_tok = int(m.group(1))
+        avail_tok = int(m.group(2))
+        ratio = max(0.35, min(0.85, (avail_tok - int(payload.get("max_tokens", 1024)) - 600) / max(req_tok, 1)))
+    else:
+        ratio = 0.65
+
+    msgs = [dict(x) for x in payload.get("messages", [])]
+    if msgs:
+        longest_idx = max(range(len(msgs)), key=lambda i: len(msgs[i].get("content", "")))
+        cur_text = msgs[longest_idx].get("content", "")
+        new_len = max(1000, int(len(cur_text) * ratio))
+        logger.warning(f"llama-server reported context overflow; shrinking message[{longest_idx}] from {len(cur_text)} to {new_len} chars and retrying.")
+        msgs[longest_idx]["content"] = _trim_middle(cur_text, new_len)
+
+    new_payload = dict(payload)
+    new_payload["messages"] = msgs
+    new_payload["max_tokens"] = min(int(payload.get("max_tokens") or MAX_NEW_TOKENS), 1536)
+    return new_payload
+
+
 @app.post("/api/chat")
 async def chat_endpoint(req: ChatReq):
     _ensure_llama_ready()
     llama_url = f"http://127.0.0.1:{INTERNAL_LLAMA_PORT}/v1/chat/completions"
     formatted_msgs = [{"role": m.role, "content": extract_content(m.content)} for m in req.messages]
-    payload = {
+    raw_payload = {
         "messages": formatted_msgs,
         "stream": bool(req.stream),
         "max_tokens": req.max_tokens or MAX_NEW_TOKENS,
         "temperature": req.temperature if req.temperature is not None else 0.7,
     }
+    payload = _fit_payload_to_context(raw_payload, LLAMA_CTX_SIZE)
 
     if not req.stream:
         def _sync_call():
-            r = requests.post(llama_url, json=payload, timeout=300)
+            cur_p = payload
+            for _attempt in range(3):
+                r = requests.post(llama_url, json=cur_p, timeout=300)
+                if r.status_code == 400 and "context" in r.text.lower():
+                    cur_p = _shrink_payload_on_400(cur_p, r.text)
+                    continue
+                r.raise_for_status()
+                return r.json()
             r.raise_for_status()
             return r.json()
 
@@ -951,32 +1017,42 @@ async def chat_endpoint(req: ChatReq):
         # Send immediate initial chunk
         yield json.dumps({"model": current_llm_repo, "message": {"role": "assistant", "content": ""}, "done": False}) + "\n"
         token_count = 0
+        cur_p = payload
         try:
-            with requests.post(llama_url, json=payload, stream=True, timeout=300) as r:
-                r.raise_for_status()
-                for raw_line in r.iter_lines(decode_unicode=True):
-                    if not raw_line:
+            for _attempt in range(3):
+                r = requests.post(llama_url, json=cur_p, stream=True, timeout=300)
+                if r.status_code == 400:
+                    err_txt = r.text
+                    r.close()
+                    if "context" in err_txt.lower() or "exceeds" in err_txt.lower():
+                        cur_p = _shrink_payload_on_400(cur_p, err_txt)
                         continue
-                    line = raw_line.strip()
-                    if not line.startswith("data:"):
-                        continue
-                    data_str = line[5:].strip()
-                    if data_str == "[DONE]":
-                        break
-                    try:
-                        chunk = json.loads(data_str)
-                        delta = chunk.get("choices", [{}])[0].get("delta", {})
-                        piece = delta.get("content") or delta.get("reasoning_content") or ""
-                        if piece:
-                            token_count += 1
-                            yield json.dumps({
-                                "model": current_llm_repo,
-                                "message": {"role": "assistant", "content": piece},
-                                "done": False,
-                            }) + "\n"
-                    except Exception:
-                        pass
-                    await asyncio.sleep(0)
+                with r:
+                    r.raise_for_status()
+                    for raw_line in r.iter_lines(decode_unicode=True):
+                        if not raw_line:
+                            continue
+                        line = raw_line.strip()
+                        if not line.startswith("data:"):
+                            continue
+                        data_str = line[5:].strip()
+                        if data_str == "[DONE]":
+                            break
+                        try:
+                            chunk = json.loads(data_str)
+                            delta = chunk.get("choices", [{}])[0].get("delta", {})
+                            piece = delta.get("content") or delta.get("reasoning_content") or ""
+                            if piece:
+                                token_count += 1
+                                yield json.dumps({
+                                    "model": current_llm_repo,
+                                    "message": {"role": "assistant", "content": piece},
+                                    "done": False,
+                                }) + "\n"
+                        except Exception:
+                            pass
+                        await asyncio.sleep(0)
+                    break
         except Exception as e:
             logger.error(f"llama.cpp stream error: {e}")
             yield json.dumps({
@@ -1000,14 +1076,12 @@ async def chat_endpoint(req: ChatReq):
 
 
 class GenerateReq(BaseModel):
+    model_config = ConfigDict(extra="allow")
     model: Optional[str] = None
     prompt: Union[str, List[Any]]
     system: Optional[str] = None
     stream: Optional[bool] = False
     options: Optional[Dict[str, Any]] = None
-
-    class Config:
-        extra = "allow"
 
 
 @app.post("/api/generate")
@@ -1090,15 +1164,13 @@ def v1_models():
 
 
 class OpenAIChatReq(BaseModel):
+    model_config = ConfigDict(extra="allow")
     model: Optional[str] = None
     messages: List[ChatMessageReq]
     stream: Optional[bool] = False
     temperature: Optional[float] = 0.7
     top_p: Optional[float] = 0.9
     max_tokens: Optional[int] = None
-
-    class Config:
-        extra = "allow"
 
 
 @app.post("/v1/chat/completions")
@@ -1107,7 +1179,7 @@ async def openai_chat_completions(req: OpenAIChatReq):
     _ensure_llama_ready()
     llama_url = f"http://127.0.0.1:{INTERNAL_LLAMA_PORT}/v1/chat/completions"
     formatted_msgs = [{"role": m.role, "content": extract_content(m.content)} for m in req.messages]
-    payload = {
+    raw_payload = {
         "model": req.model or current_llm_repo,
         "messages": formatted_msgs,
         "stream": bool(req.stream),
@@ -1115,10 +1187,18 @@ async def openai_chat_completions(req: OpenAIChatReq):
         "top_p": req.top_p or 0.9,
         "max_tokens": req.max_tokens or MAX_NEW_TOKENS,
     }
+    payload = _fit_payload_to_context(raw_payload, LLAMA_CTX_SIZE)
 
     if not req.stream:
         def _sync_call():
-            r = requests.post(llama_url, json=payload, timeout=300)
+            cur_p = payload
+            for _attempt in range(3):
+                r = requests.post(llama_url, json=cur_p, timeout=300)
+                if r.status_code == 400 and ("context" in r.text.lower() or "exceeds" in r.text.lower()):
+                    cur_p = _shrink_payload_on_400(cur_p, r.text)
+                    continue
+                r.raise_for_status()
+                return r.json()
             r.raise_for_status()
             return r.json()
 
@@ -1126,13 +1206,23 @@ async def openai_chat_completions(req: OpenAIChatReq):
         return await loop.run_in_executor(None, _sync_call)
 
     async def sse_stream():
+        cur_p = payload
         try:
-            with requests.post(llama_url, json=payload, stream=True, timeout=300) as r:
-                r.raise_for_status()
-                for raw_line in r.iter_lines(decode_unicode=True):
-                    if raw_line:
-                        yield f"{raw_line}\n\n"
-                        await asyncio.sleep(0)
+            for _attempt in range(3):
+                r = requests.post(llama_url, json=cur_p, stream=True, timeout=300)
+                if r.status_code == 400:
+                    err_txt = r.text
+                    r.close()
+                    if "context" in err_txt.lower() or "exceeds" in err_txt.lower():
+                        cur_p = _shrink_payload_on_400(cur_p, err_txt)
+                        continue
+                with r:
+                    r.raise_for_status()
+                    for raw_line in r.iter_lines(decode_unicode=True):
+                        if raw_line:
+                            yield f"{raw_line}\n\n"
+                            await asyncio.sleep(0)
+                    break
         except Exception as e:
             err_chunk = {
                 "id": f"chatcmpl-{int(time.time()*1000)}",
@@ -1152,14 +1242,12 @@ async def openai_chat_completions(req: OpenAIChatReq):
 
 
 class OpenAICompletionReq(BaseModel):
+    model_config = ConfigDict(extra="allow")
     model: Optional[str] = None
     prompt: Union[str, List[Any]]
     stream: Optional[bool] = False
     temperature: Optional[float] = 0.7
     max_tokens: Optional[int] = None
-
-    class Config:
-        extra = "allow"
 
 
 @app.post("/v1/completions")

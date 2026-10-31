@@ -86,7 +86,7 @@ if (-not $env:LLM_DEVICE) { $env:LLM_DEVICE = "GPU" }
 $env:EMBED_DEVICE = "NPU"
 if (-not $env:MAX_NEW_TOKENS) { $env:MAX_NEW_TOKENS = "2048" }
 if (-not $env:LLAMA_NGL) { $env:LLAMA_NGL = "99" }
-if (-not $env:LLAMA_CTX_SIZE) { $env:LLAMA_CTX_SIZE = "16384" }
+if (-not $env:LLAMA_CTX_SIZE) { $env:LLAMA_CTX_SIZE = "32768" }
 if (-not $env:SERVER_HOST) { $env:SERVER_HOST = if ($env:LLAMA_HOST) { $env:LLAMA_HOST } else { "0.0.0.0" } }
 if (-not $env:SERVER_PORT) { $env:SERVER_PORT = if ($env:LLAMA_PORT) { $env:LLAMA_PORT } else { "11434" } }
 
