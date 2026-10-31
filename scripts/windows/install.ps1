@@ -7,7 +7,7 @@ param(
     [switch]$SkipNpm = $false
 )
 
-$ErrorActionPreference = "Stop"
+$ErrorActionPreference = "Continue"
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $BaseDir = Resolve-Path "$ScriptDir\..\.."
 Set-Location $BaseDir
@@ -29,20 +29,37 @@ if (-not (Test-Path $EnvFile)) {
 
 # 2. Check Prerequisites
 Write-Host "`n[*] Checking system prerequisites..." -ForegroundColor Yellow
-$PythonCmd = Get-Command python.exe -ErrorAction SilentlyContinue
-if (-not $PythonCmd) {
+
+$PythonExe = "python.exe"
+$pyCmd = Get-Command python.exe -ErrorAction SilentlyContinue
+if (-not $pyCmd) {
     Write-Host "[-] Python is not installed or not in PATH! Please install Python 3.10, 3.11, or 3.12 from python.org." -ForegroundColor Red
     exit 1
 }
+
+# If Python Launcher (py.exe) is available, prioritize Python 3.11, 3.12, or 3.10 for Intel XPU / IPEX-LLM compatibility
+$pyLauncher = Get-Command py.exe -ErrorAction SilentlyContinue
+if ($pyLauncher) {
+    foreach ($ver in @("-3.11", "-3.12", "-3.10")) {
+        $found = & py.exe $ver -c "import sys; print(sys.executable)" 2>$null
+        if ($LASTEXITCODE -eq 0 -and $found -and (Test-Path $found.Trim())) {
+            $PythonExe = $found.Trim()
+            Write-Host "[*] Selected Python $ver for optimal Intel PyTorch / IPEX compatibility: $PythonExe" -ForegroundColor Cyan
+            break
+        }
+    }
+}
+
 $NodeCmd = Get-Command node.exe -ErrorAction SilentlyContinue
 if (-not $NodeCmd) {
     Write-Host "[-] Node.js is not installed or not in PATH! Please install Node.js 18+ from nodejs.org." -ForegroundColor Red
     exit 1
 }
-$pyVer = & python.exe --version 2>&1
-$nodeVer = & node.exe --version 2>&1
-Write-Host "[OK] Python: $pyVer" -ForegroundColor Green
-Write-Host "[OK] Node.js: $nodeVer" -ForegroundColor Green
+
+$pyVer = & $PythonExe --version 2>&1 | Out-String
+$nodeVer = & node.exe --version 2>&1 | Out-String
+Write-Host "[OK] Python: $($pyVer.Trim())" -ForegroundColor Green
+Write-Host "[OK] Node.js: $($nodeVer.Trim())" -ForegroundColor Green
 
 # 3. Create Directories
 $Dirs = @(
@@ -63,7 +80,7 @@ foreach ($d in $Dirs) {
 Write-Host "`n[*] Configuring RSS Python environment (.venv)..." -ForegroundColor Yellow
 $VenvDir = Join-Path $BaseDir ".venv"
 if (-not (Test-Path $VenvDir)) {
-    python -m venv $VenvDir
+    & $PythonExe -m venv $VenvDir
 }
 $VenvPip = Join-Path $VenvDir "Scripts\pip.exe"
 $pipUpArgs = @("install", "-q", "--upgrade", "pip")
@@ -75,16 +92,25 @@ $rssArgs = @("install", "-q", "psycopg2-binary", "qdrant-client", "requests")
 Write-Host "`n[*] Configuring OpenVINO / IPEX-LLM Python environment (.venv-openvino)..." -ForegroundColor Yellow
 $VenvOvDir = Join-Path $BaseDir ".venv-openvino"
 if (-not (Test-Path $VenvOvDir)) {
-    python -m venv $VenvOvDir
+    & $PythonExe -m venv $VenvOvDir
 }
 $VenvOvPip = Join-Path $VenvOvDir "Scripts\pip.exe"
 $VenvOvPy = Join-Path $VenvOvDir "Scripts\python.exe"
 
 & $VenvOvPip @pipUpArgs
 
-# Check if PyTorch XPU is already installed
-$HasXpuTorch = & $VenvOvPy -c "import torch; print('+xpu' in torch.__version__)" 2>$null
-if ($HasXpuTorch -ne "True") {
+# Check if PyTorch XPU is already installed via pip show (avoids python import stderr NativeCommandError)
+$HasXpuTorch = $false
+try {
+    $showTorch = & $VenvOvPip show torch 2>&1 | Out-String
+    if ($showTorch -match "\+xpu") {
+        $HasXpuTorch = $true
+    }
+} catch {
+    $HasXpuTorch = $false
+}
+
+if (-not $HasXpuTorch) {
     Write-Host "[*] Installing PyTorch with Intel Arc XPU support for Windows..." -ForegroundColor Yellow
     $torchArgs = @("install", "--pre", "--upgrade", "torch", "torchvision", "torchaudio", "--index-url", "https://download.pytorch.org/whl/xpu")
     & $VenvOvPip @torchArgs
