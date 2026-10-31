@@ -1,7 +1,7 @@
 # ==============================================================================
 # K13 AI Hub - Windows Web Portal Runner
 # ==============================================================================
-$ErrorActionPreference = "Stop"
+$ErrorActionPreference = "Continue"
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $BaseDir = Resolve-Path "$ScriptDir\..\.."
 Set-Location $BaseDir

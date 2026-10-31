@@ -2,7 +2,7 @@
 # K13 AI Hub - Windows llama.cpp Server Runner
 # Launches FastAPI orchestrator managing native llama-server.exe & embeddings
 # ==============================================================================
-$ErrorActionPreference = "Stop"
+$ErrorActionPreference = "Continue"
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $BaseDir = Resolve-Path "$ScriptDir\..\.."
 Set-Location $BaseDir
@@ -32,7 +32,7 @@ if (-not (Test-Path $Py)) {
     & python.exe -m venv $VenvDir
 }
 if (Test-Path $Py) {
-    & $Py -c "import fastapi, uvicorn, transformers, torch" 2>$null
+    & $Py -c "import importlib.util, sys; sys.exit(0 if all(importlib.util.find_spec(m) for m in ('fastapi','uvicorn','transformers','torch')) else 1)"
     if ($LASTEXITCODE -ne 0) {
         $reqFile = Join-Path $BaseDir "llama\requirements.txt"
         Write-Host "[*] Installing Python dependencies from $reqFile..." -ForegroundColor Yellow
@@ -73,4 +73,3 @@ if (-not (Test-Path $env:MODELS_DIR)) {
 $ServerScript = Join-Path $BaseDir "llama\server.py"
 Write-Host "[+] Starting K13 llama.cpp server on Windows: http://$($env:SERVER_HOST):$($env:SERVER_PORT)" -ForegroundColor Cyan
 & $Py $ServerScript
-
