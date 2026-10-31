@@ -2,12 +2,11 @@
 # K13 AI Hub - Windows Control CLI (PowerShell)
 # Usage:
 #   .\k13ctl.ps1 status
-#   .\k13ctl.ps1 start {all|openvino|qdrant|web|rss}
-#   .\k13ctl.ps1 stop {all|openvino|qdrant|web|rss}
-#   .\k13ctl.ps1 restart {all|openvino|qdrant|web|rss}
-#   .\k13ctl.ps1 logs {openvino|qdrant|web|rss}
+#   .\k13ctl.ps1 start {all|llama|qdrant|web|rss}
+#   .\k13ctl.ps1 stop {all|llama|qdrant|web|rss}
+#   .\k13ctl.ps1 restart {all|llama|qdrant|web|rss}
+#   .\k13ctl.ps1 logs {llama|qdrant|web|rss}
 #   .\k13ctl.ps1 check-hardware
-#   .\k13ctl.ps1 fix-transformers
 #   .\k13ctl.ps1 install-qdrant-ui
 #   .\k13ctl.ps1 test
 # ==============================================================================
@@ -74,11 +73,11 @@ function Start-K13Service($svc) {
             Save-ServicePid "qdrant" $p.Id
             Write-Host "[OK] Qdrant started (PID: $($p.Id))" -ForegroundColor Green
         }
-        "openvino" {
-            $runner = Join-Path $BaseDir "scripts\windows\run-openvino.ps1"
-            $p = Start-Process powershell.exe -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$runner`"" -RedirectStandardOutput $logFile -RedirectStandardError (Join-Path $LogDir "openvino_err.log") -PassThru -WindowStyle Hidden
-            Save-ServicePid "openvino" $p.Id
-            Write-Host "[OK] OpenVINO / IPEX-LLM started (PID: $($p.Id))" -ForegroundColor Green
+        "llama" {
+            $runner = Join-Path $BaseDir "scripts\windows\run-llama.ps1"
+            $p = Start-Process powershell.exe -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$runner`"" -RedirectStandardOutput $logFile -RedirectStandardError (Join-Path $LogDir "llama_err.log") -PassThru -WindowStyle Hidden
+            Save-ServicePid "llama" $p.Id
+            Write-Host "[OK] llama.cpp server started (PID: $($p.Id))" -ForegroundColor Green
         }
         "web" {
             $runner = Join-Path $BaseDir "scripts\windows\run-web.ps1"
@@ -102,15 +101,15 @@ function Stop-K13Service($svc) {
     $id = Get-ServicePid $svc
     if ($id) {
         Write-Host "[-] Stopping $svc (PID: $id)..." -ForegroundColor Yellow
-        # Terminate entire process tree on Windows so child python/node/qdrant processes also stop cleanly
+        # Terminate entire process tree on Windows so child llama-server/python/node/qdrant processes also stop cleanly
         & taskkill.exe /PID $id /T /F 2>$null | Out-Null
         Stop-Process -Id $id -Force -ErrorAction SilentlyContinue
         Remove-ServicePid $svc
         Write-Host "[OK] $svc stopped." -ForegroundColor Green
     } else {
-        # Fallback process search
         switch ($svc) {
             "qdrant" { Stop-Process -Name "qdrant" -Force -ErrorAction SilentlyContinue }
+            "llama"  { Stop-Process -Name "llama-server" -Force -ErrorAction SilentlyContinue }
             default {}
         }
         Remove-ServicePid $svc
@@ -121,10 +120,10 @@ function Stop-K13Service($svc) {
 switch ($Command.ToLower()) {
     "status" {
         Write-Host "==========================================================" -ForegroundColor Cyan
-        Write-Host "  K13 AI Hub - Windows Services Status                    " -ForegroundColor Cyan
+        Write-Host "  K13 AI Hub - Windows Services Status (llama.cpp)        " -ForegroundColor Cyan
         Write-Host "==========================================================" -ForegroundColor Cyan
 
-        $services = @("qdrant", "openvino", "web", "rss")
+        $services = @("qdrant", "llama", "web", "rss")
         foreach ($s in $services) {
             $pidVal = Get-ServicePid $s
             $stat = if ($pidVal) { "[ACTIVE] PID: $pidVal" } else { "[STOPPED]" }
@@ -141,12 +140,12 @@ switch ($Command.ToLower()) {
             Write-Host "Qdrant    : [-] Not responding (http://127.0.0.1:6333)" -ForegroundColor Red
         }
 
-        # OpenVINO probe
+        # llama.cpp probe
         try {
-            $ovRes = Invoke-RestMethod -Uri "http://127.0.0.1:11434/healthz" -TimeoutSec 5 -ErrorAction Stop
-            Write-Host "OpenVINO  : [OK] Status: $($ovRes.status) | LLM: $($ovRes.llm_hardware) ($($ovRes.current_model)) | Embeddings: $($ovRes.embed_hardware)" -ForegroundColor Green
+            $llRes = Invoke-RestMethod -Uri "http://127.0.0.1:11434/healthz" -TimeoutSec 5 -ErrorAction Stop
+            Write-Host "llama.cpp : [OK] Status: $($llRes.status) | LLM: $($llRes.llm_hardware) ($($llRes.current_model)) | Embeddings: $($llRes.embed_hardware)" -ForegroundColor Green
         } catch {
-            Write-Host "OpenVINO  : [-] Not responding (still loading model onto Intel Arc GPU?)" -ForegroundColor Yellow
+            Write-Host "llama.cpp : [-] Not responding (still loading GGUF model?)" -ForegroundColor Yellow
         }
 
         # Web portal probe
@@ -162,7 +161,7 @@ switch ($Command.ToLower()) {
         if ($Target -eq "all") {
             Start-K13Service "qdrant"
             Start-Sleep -Seconds 1
-            Start-K13Service "openvino"
+            Start-K13Service "llama"
             Start-Sleep -Seconds 1
             Start-K13Service "web"
             Start-Sleep -Seconds 1
@@ -176,7 +175,7 @@ switch ($Command.ToLower()) {
         if ($Target -eq "all") {
             Stop-K13Service "rss"
             Stop-K13Service "web"
-            Stop-K13Service "openvino"
+            Stop-K13Service "llama"
             Stop-K13Service "qdrant"
         } else {
             Stop-K13Service $Target
@@ -196,7 +195,7 @@ switch ($Command.ToLower()) {
     }
 
     "logs" {
-        $svc = if ($Target -and $Target -ne "all") { $Target } else { "openvino" }
+        $svc = if ($Target -and $Target -ne "all") { $Target } else { "llama" }
         $logPath = Join-Path $LogDir "$svc.log"
         if (Test-Path $logPath) {
             Get-Content $logPath -Tail 60 -Wait
@@ -206,7 +205,7 @@ switch ($Command.ToLower()) {
     }
 
     "check-hardware" {
-        $Py = Join-Path $BaseDir ".venv-openvino\Scripts\python.exe"
+        $Py = Join-Path $BaseDir ".venv\Scripts\python.exe"
         if (-not (Test-Path $Py)) { $Py = "python.exe" }
         $verifyScript = Join-Path $BaseDir "scripts\windows\verify_hardware.py"
         if (Test-Path $verifyScript) {
@@ -214,15 +213,6 @@ switch ($Command.ToLower()) {
         } else {
             Write-Host "[-] Verification script not found at $verifyScript" -ForegroundColor Red
         }
-    }
-
-    "fix-transformers" {
-        $Pip = Join-Path $BaseDir ".venv-openvino\Scripts\pip.exe"
-        Write-Host "[*] Pinning transformers<=4.44.2 to resolve OffloadedCache issue..." -ForegroundColor Yellow
-        $fixArgs = @("install", "transformers>=4.37.0,<=4.44.2")
-        & $Pip @fixArgs
-        Write-Host "[OK] Done! Verifying IPEX-LLM..." -ForegroundColor Green
-        & $PSCommandPath check-hardware
     }
 
     "test" {
@@ -235,7 +225,7 @@ switch ($Command.ToLower()) {
             Write-Host "  [-] Embedding test failed: $_" -ForegroundColor Red
         }
 
-        Write-Host "[*] Running chat generation test..." -ForegroundColor Cyan
+        Write-Host "[*] Running llama.cpp chat generation test..." -ForegroundColor Cyan
         try {
             $body = '{"prompt":"Reply with the single word: ready","stream":false}'
             $res = Invoke-RestMethod -Uri "http://127.0.0.1:11434/api/generate" -Method POST -Body $body -ContentType "application/json" -TimeoutSec 30
@@ -279,6 +269,6 @@ switch ($Command.ToLower()) {
     }
 
     default {
-        Write-Host "Usage: .\k13ctl.ps1 {status|start|stop|restart|logs|check-hardware|fix-transformers|install-qdrant-ui|test} [target]" -ForegroundColor Yellow
+        Write-Host "Usage: .\k13ctl.ps1 {status|start|stop|restart|logs|check-hardware|install-qdrant-ui|test} [target]" -ForegroundColor Yellow
     }
 }

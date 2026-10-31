@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Sync FreshRSS -> PostgreSQL -> OpenVINO Embeddings (Intel NPU) -> Qdrant.
+"""Sync FreshRSS -> PostgreSQL -> Hugging Face BGE Embeddings -> Qdrant.
 
 Pipeline Workflow:
   1. Connects to the FreshRSS Server API (Google Reader compatible API).
@@ -10,7 +10,7 @@ Pipeline Workflow:
      - Genuinely new unread items are inserted into PostgreSQL with vector_indexed=FALSE
        using exact columns (id, feed_title, title, url, author, clean_content,
        "group", published_at, fetched_at, vector_indexed, freshrss_id).
-  4. Generates dense vector embeddings via OpenVINO on Intel NPU (bge-base 768d)
+  4. Generates dense vector embeddings via BGE (bge-base 768d)
      and upserts points into Qdrant collection 'rss_articles' matching payload format:
      { title, url, feed, group, published_at, text }.
   5. Updates PostgreSQL records to vector_indexed=TRUE.
@@ -82,9 +82,9 @@ qdrant_port = get_env_opt("QDRANT_PORT", default="6333")
 QDRANT_URL = get_env_opt("QDRANT_URL", default=f"http://{qdrant_host}:{qdrant_port}")
 QDRANT_COLLECTION = get_env_opt("QDRANT_COLLECTION", default="rss_articles")
 
-# OpenVINO Embeddings configuration (Intel NPU)
-ov_port = get_env_opt("OV_PORT", default="11434")
-EMBEDDING_HOST = get_env_opt("EMBEDDING_HOST", "OLLAMA_HOST", default=f"http://127.0.0.1:{ov_port}").rstrip("/")
+# Embeddings configuration
+llama_port = get_env_opt("LLAMA_PORT", default="11434")
+EMBEDDING_HOST = get_env_opt("EMBEDDING_HOST", "OLLAMA_HOST", default=f"http://127.0.0.1:{llama_port}").rstrip("/")
 EMBED_MODEL = get_env_opt("EMBED_MODEL", default="BAAI/bge-base-en-v1.5")
 EMBED_DIMS = int(get_env_opt("EMBED_DIMS", default="768"))
 if "small" in EMBED_MODEL:
@@ -635,11 +635,11 @@ def detect_and_prep_pg_table(conn, dbname: str) -> Optional[Dict[str, Any]]:
 
 
 # ==============================================================================
-# OpenVINO Embeddings (Intel NPU) & Qdrant Operations
+# Vector Embeddings & Qdrant Operations
 # ==============================================================================
 
 def get_embedding(text: str) -> Optional[List[float]]:
-    """Single-item embedding generation via OpenVINO server."""
+    """Single-item embedding generation via inference server."""
     for endpoint, payload in [
         ("/api/embed", {"model": EMBED_MODEL, "input": text[:2000]}),
         ("/api/embeddings", {"model": EMBED_MODEL, "prompt": text[:2000]})
@@ -658,7 +658,7 @@ def get_embedding(text: str) -> Optional[List[float]]:
 
 
 def get_embeddings_batch(texts: List[str]) -> List[Optional[List[float]]]:
-    """Generates embeddings for a batch of texts using OpenVINO server on Intel NPU."""
+    """Generates embeddings for a batch of texts using inference server."""
     if not texts:
         return []
     truncated = [t[:2000] for t in texts]
@@ -738,7 +738,7 @@ def ensure_qdrant_collection(qdrant: QdrantClient) -> bool:
 
 def main():
     logger.info("=" * 70)
-    logger.info("Starting FreshRSS -> PostgreSQL -> OpenVINO (NPU) -> Qdrant Sync")
+    logger.info("Starting FreshRSS -> PostgreSQL -> BGE Embeddings -> Qdrant Sync")
     logger.info("=" * 70)
 
     # 1. Connect to Qdrant
@@ -970,7 +970,7 @@ def main():
                 conn.commit()
                 logger.info(f"[✓] Exported {inserted_count} new articles to PostgreSQL {qualified}.")
 
-    # 6. Fetch unindexed records from PostgreSQL, embed with OpenVINO (Intel NPU),
+    # 6. Fetch unindexed records from PostgreSQL, embed via local inference server,
     #    upsert into Qdrant, and update vector_indexed=TRUE
     total_embedded = 0
     newly_embedded_freshrss_ids: List[str] = []
@@ -1062,7 +1062,7 @@ def main():
                             "text": clean_text
                         })
 
-                    # Generate embeddings via OpenVINO on Intel NPU
+                    # Generate embeddings via local inference server
                     vectors = get_embeddings_batch(texts_to_embed)
 
                     points_to_upsert = []

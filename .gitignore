@@ -8,7 +8,7 @@
 
 # Python
 .venv/
-.venv-openvino/
+.venv-llama/
 venv/
 __pycache__/
 *.py[cod]

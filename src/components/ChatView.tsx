@@ -158,10 +158,10 @@ export const ChatView: React.FC<ChatViewProps> = ({
               Welcome to K13 Intelligence Hub
             </h3>
             <p className="text-sm text-slate-400 mb-4">
-              Ask anything grounded on Intel OpenVINO hardware acceleration and Qdrant neural search.
+              Ask anything grounded on native llama.cpp GGUF inference and Qdrant neural search.
             </p>
             <div className="text-xs text-slate-500 space-y-1">
-              <p>• GPU: INT4 LLM Pipeline (Qwen3 / Phi / Llama)</p>
+              <p>• GPU: llama.cpp GGUF Pipeline (Qwen3 / Gemma 3 / DeepSeek / Llama)</p>
               <p>• NPU: BGE Base 768-dim Vector Embeddings</p>
               <p>• Grounded citations with direct source links</p>
             </div>

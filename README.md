@@ -1,58 +1,24 @@
-# K13 AI Hub - Windows Native Edition (Intel IPEX-LLM & OpenVINO RAG Platform)
+# K13 AI Hub - Windows Native Edition (llama.cpp GGUF & Qdrant RAG Platform)
 
-A full-featured Windows 11 / Windows Server application powered by **Intel IPEX-LLM (Intel Extension for PyTorch)** on the **Intel Arc GPU (XPU)** and **OpenVINO** on the **Intel NPU**, paired with native Windows **Qdrant Vector Database** and a **React & Vite Portal**.
+A full-featured Windows 11 / Windows Server application powered by native **`llama.cpp` (`llama-server.exe`)** for Hugging Face GGUF LLM inference, **Hugging Face Transformers** for BGE vector embeddings, native Windows **Qdrant Vector Database**, and a **React & Vite Portal**.
 
 ```
- browser ──► K13 React Portal (:3000) ──┬──► IPEX-LLM / OpenVINO Server (:11434)  [LLM on Intel Arc GPU + BGE on Intel NPU]
-                                        └──► Qdrant Vector DB (:6333)             [768-dim Cosine Index (qdrant.exe)]
+ browser ──► K13 React Portal (:3000) ──┬──► llama.cpp Server (:11434)   [GGUF LLM on GPU + BGE Embeddings]
+                                        └──► Qdrant Vector DB (:6333)    [768-dim Cosine Index (qdrant.exe)]
 ```
 
 ---
 
-## Hardware Acceleration on Windows
-- **Intel Arc GPU / XPU**: Accelerated via IPEX-LLM with dynamic on-the-fly **4-bit INT4 quantization** (~6.8 GB VRAM cap enforcement and CPU rollback handling). Intel Arc Graphics WHQL drivers natively include oneAPI Level Zero compute runtimes on Windows 11.
-- **Intel NPU**: Accelerated via OpenVINO using the Intel NPU Driver for Windows (Lunar Lake / Meteor Lake / Arrow Lake) for `BAAI/bge-base-en-v1.5` (768 dims) and `BAAI/bge-small-en-v1.5` (384 dims) embeddings.
-- **CPU Fallback**: Automatic graceful fallback if requested via `SWITCH_ALLOW_CPU=on`.
-
----
-
-## Features
-
-1. **Neural Vector RAG & Intelligence Chat**:
-   - Hybrid vector + exact URL lookup retrieval.
-   - Grounded citations with direct article hyperlinks.
-   - Persona prompts: Objective News Analyst, Executive Intelligence Brief, Technical Deep Dive, and Analytical Unbiased (6-principle framework).
-   - Timeframe filter (All Time, 24 Hours, 7 Days, 30 Days, Custom range with timezone selection and date-time pickers).
-   - Feed and Group facet filtering.
-   - Real-time token streaming with `<think>...</think>` reasoning stripping.
-   - Comprehensive Query Statistics: Tokens/s, Output tokens, Prompt tokens, Time to 1st token (TTFT), Timing breakdown, and Retrieval & Truncation report.
-   - Self-contained standalone HTML report export (`answerToHtml`).
-
-2. **Intel Hardware & Model Engine Switcher**:
-   - Intel Arc GPU (XPU): INT4 chat & reasoning models with ~6.8 GB VRAM cap enforcement and CPU rollback handling.
-   - Intel NPU: BGE Base (768 dims) and BGE Small (384 dims) models.
-   - Force reload on GPU action for CPU fallbacks.
-   - Custom Hugging Face repository loader.
-
-3. **Daily Briefing Generator**:
-   - Generates 4 numbered summaries `[1]`–`[4]`, synopsis, and verified real source citations from 24-hour news feeds.
-   - Formats: Markdown (with `[[n]](url)` hyperlinks) and Facebook post text.
-   - Export to `.md` or `.txt` and clipboard copy.
-
-4. **Windows Services & Cluster Control (`k13ctl.ps1`)**:
-   - Service health monitoring: `openvino`, `qdrant`, `web`, `rss`.
-   - Actions: Start, Stop, Restart, Status.
-   - Smoke test execution (`k13ctl.ps1 test`) checking embedding dimensions and chat response.
-   - Live service log viewer (`logs\<service>.log`).
-
-5. **Configuration Inspector (`.env`)**:
-   - Environment parameters viewer, platform architecture guidelines, and cluster mode switcher (Simulated Intel Cluster vs Live Local Endpoints).
+## Why `llama.cpp` on Windows?
+- **Full Hugging Face GGUF Ecosystem**: Run any modern architecture on Hugging Face—including **Qwen3**, **Gemma 3**, **DeepSeek R1**, **Phi-4**, **Llama 3.2 / 3.3**, **Mistral**, and **Qwen2.5-Coder**—in `Q4_K_M`, `Q5_K_M`, `Q6_K`, or `Q8_0` quantizations.
+- **Native GPU Acceleration**: Offloads model layers (`-ngl 99`) directly to your GPU via `llama-server.exe` (Vulkan / SYCL / CUDA) without version-locked Python compiler chains.
+- **Automatic GGUF Resolution**: Enter any Hugging Face GGUF repository (or standard model ID) in the Model Switcher and the server automatically downloads the optimal `.gguf` quantization into `data\models\` and hot-swaps `llama-server.exe`.
 
 ---
 
 ## Prerequisites for Windows
-1. **Intel Arc Graphics Driver & Intel NPU Driver**: Install the latest WHQL drivers from [Intel Download Center](https://www.intel.com/content/www/us/en/download/785597/intel-arc-iris-xe-graphics-windows.html).
-2. **Python 3.10, 3.11, or 3.12**: Download from [python.org](https://www.python.org/downloads/) (check "Add Python to PATH" during installation).
+1. **`llama.cpp` installed on Windows**: Ensure `llama-server.exe` is in your system `PATH`, or set `LLAMA_SERVER_BIN` / `LLAMA_CPP_DIR` in `.env`.
+2. **Python 3.10+**: Download from [python.org](https://www.python.org/downloads/) (check "Add Python to PATH" during installation).
 3. **Node.js 18+**: Download from [nodejs.org](https://nodejs.org/).
 4. **Git for Windows**: Download from [git-scm.com](https://git-scm.com/).
 
@@ -60,10 +26,10 @@ A full-featured Windows 11 / Windows Server application powered by **Intel IPEX-
 
 ## Quick Start
 
-1. **Install everything automatically:**
+1. **Install dependencies:**
    Double-click `install.bat` (or in PowerShell run `.\scripts\windows\install.ps1`).
-   - Sets up Python virtual environments (`.venv` and `.venv-openvino`).
-   - Installs PyTorch with Intel XPU acceleration and IPEX-LLM.
+   - Sets up Python virtual environment (`.venv`).
+   - Installs FastAPI, Hugging Face Hub, and embedding dependencies.
    - Downloads native Windows `qdrant.exe` and Web UI into `.\bin\qdrant\`.
    - Builds the React Web Portal.
    - Copies `.env.example` to `.env`.
@@ -91,12 +57,11 @@ A full-featured Windows 11 / Windows Server application powered by **Intel IPEX-
 | Command | Description |
 |---|---|
 | `.\scripts\windows\k13ctl.ps1 status` | Display service status and health probes |
-| `.\scripts\windows\k13ctl.ps1 start all` | Start Qdrant, OpenVINO server, Web portal, and RSS sync |
+| `.\scripts\windows\k13ctl.ps1 start all` | Start Qdrant, llama.cpp server, Web portal, and RSS sync |
 | `.\scripts\windows\k13ctl.ps1 stop all` | Stop all running services |
-| `.\scripts\windows\k13ctl.ps1 restart openvino` | Restart IPEX-LLM inference server |
-| `.\scripts\windows\k13ctl.ps1 check-hardware` | Verify Intel Arc GPU (XPU) and NPU in PyTorch & OpenVINO |
-| `.\scripts\windows\k13ctl.ps1 logs openvino` | Stream live logs for model switching & generation |
-| `.\scripts\windows\k13ctl.ps1 fix-transformers` | Ensure `transformers<=4.44.2` compatibility |
+| `.\scripts\windows\k13ctl.ps1 restart llama` | Restart `llama.cpp` inference server |
+| `.\scripts\windows\k13ctl.ps1 check-hardware` | Verify `llama-server.exe` binary and Python stack |
+| `.\scripts\windows\k13ctl.ps1 logs llama` | Stream live logs for model switching & generation |
 | `.\scripts\windows\k13ctl.ps1 install-qdrant-ui` | Download & install Qdrant Web GUI Dashboard |
 | `.\scripts\windows\k13ctl.ps1 test` | Run embedding and chat inference smoke tests |
 
@@ -108,5 +73,5 @@ A full-featured Windows 11 / Windows Server application powered by **Intel IPEX-
   - `/v1/chat/completions` (OpenAI format for Continue / Cursor / VS Code)
   - `/api/chat` and `/api/generate` (Ollama format)
   - `/api/embeddings` and `/v1/embeddings`
-  - `/api/switch-model` (Dynamic INT4 switching)
+  - `/api/switch-model` (Dynamic GGUF downloading & hot-swapping)
 - **Qdrant Vector Database**: `http://localhost:6333/dashboard`

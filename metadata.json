@@ -1,6 +1,6 @@
 {
   "name": "K13 AI Hub",
-  "description": "Intel OpenVINO-accelerated Vector RAG platform, neural search interface, and cluster control portal.",
+  "description": "llama.cpp GGUF-accelerated Vector RAG platform, neural search interface, and cluster control portal.",
   "permissions": [],
   "capabilities": [
     "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"

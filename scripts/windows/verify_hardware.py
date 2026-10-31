@@ -1,58 +1,47 @@
 #!/usr/bin/env python3
 """
-K13 AI Hub - Windows Hardware & Inference Stack Verification
-Verifies Intel Arc GPU (XPU) via PyTorch / IPEX-LLM and Intel NPU via OpenVINO.
+K13 AI Hub - Windows Hardware & llama.cpp Stack Verification
+Verifies native llama-server.exe binary, GPU backend, and Hugging Face Embeddings.
 """
 import os
 import sys
+import subprocess
 
-# Ensure Level Zero drivers and oneAPI selectors are initialized
-os.environ.setdefault("ZE_INIT_ALL_DRIVER_TYPES_ENABLE", "1")
-os.environ.setdefault("ONEAPI_DEVICE_SELECTOR", "level_zero:*")
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, BASE_DIR)
 
 print("=" * 60)
-print("  K13 AI Hub - Hardware & Inference Stack Verification")
+print("  K13 AI Hub - Windows llama.cpp & Stack Verification")
 print("=" * 60)
 
-# 1. PyTorch & Intel Arc GPU (XPU)
+# 1. Locate llama-server.exe
 try:
+    from llama.server import find_llama_server_binary
+    bin_path = find_llama_server_binary()
+    if bin_path:
+        print(f"[OK] llama-server.exe located: {bin_path}")
+        try:
+            res = subprocess.run([bin_path, "--version"], capture_output=True, text=True, timeout=10)
+            ver_out = (res.stdout or res.stderr or "").strip().splitlines()
+            if ver_out:
+                print(f"     Version info: {ver_out[0]}")
+        except Exception as e_ver:
+            print(f"     (Could not query --version: {e_ver})")
+    else:
+        print("[-] llama-server.exe not found in PATH or default locations.")
+        print("    Tip: Set LLAMA_SERVER_BIN or LLAMA_CPP_DIR in .env pointing to your llama.cpp install.")
+except Exception as e:
+    print(f"[-] Error checking llama-server binary: {e}")
+
+# 2. Check Hugging Face Hub & Transformers (for GGUF download + BGE Embeddings)
+try:
+    import huggingface_hub
+    import transformers
     import torch
-    print(f"[*] PyTorch Version: {torch.__version__}")
-    xpu_ready = hasattr(torch, "xpu") and torch.xpu.is_available()
-    dev_count = torch.xpu.device_count() if xpu_ready else 0
-    if xpu_ready and dev_count > 0:
-        dev_name = torch.xpu.get_device_name(0)
-        print(f"[OK] Intel Arc GPU (XPU): READY ({dev_count} device(s) found)")
-        print(f"     Device 0: {dev_name}")
-    else:
-        print("[-] Intel Arc GPU (XPU): NOT DETECTED or 0 devices found.")
-        print("    Tip: Ensure Intel Arc Graphics Windows WHQL driver is installed.")
+    print(f"[OK] huggingface_hub: {huggingface_hub.__version__}")
+    print(f"[OK] transformers:    {transformers.__version__}")
+    print(f"[OK] torch:           {torch.__version__}")
 except Exception as e:
-    print(f"[-] PyTorch error: {e}")
-
-# 2. IPEX-LLM Verification
-try:
-    import ipex_llm
-    from ipex_llm.transformers import AutoModelForCausalLM
-    print(f"[OK] IPEX-LLM: READY (version {ipex_llm.__version__})")
-except Exception as e:
-    print(f"[-] IPEX-LLM Warning: {e}")
-    if "OffloadedCache" in str(e):
-        print("    Tip: Run .\\scripts\\windows\\k13ctl.ps1 fix-transformers to pin transformers<=4.44.2")
-
-# 3. OpenVINO & Intel NPU Verification
-try:
-    import openvino as ov
-    core = ov.Core()
-    devices = core.available_devices
-    print(f"[*] OpenVINO Available Devices: {', '.join(devices)}")
-    if "NPU" in devices:
-        print("[OK] Intel NPU: READY (Fast embeddings accelerated on NPU)")
-    elif "GPU" in devices:
-        print("[*] Intel NPU not present; OpenVINO GPU/CPU acceleration available.")
-    else:
-        print("[*] OpenVINO CPU mode active.")
-except Exception as e:
-    print(f"[-] OpenVINO Warning: {e}")
+    print(f"[-] Python dependency warning: {e}")
 
 print("=" * 60)

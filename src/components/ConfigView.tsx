@@ -48,19 +48,19 @@ const KNOWN_ENV_VARIABLES: EnvVarDefinition[] = [
     key: 'MAX_NEW_TOKENS',
     defaultVal: '2048',
     category: 'Models & Hardware',
-    desc: 'Generation limit for tokens generated per prompt query by IPEX-LLM / Intel GPU.'
+    desc: 'Generation limit for tokens generated per prompt query by llama.cpp.'
   },
   {
     key: 'DEFAULT_MODEL',
-    defaultVal: 'Qwen/Qwen2.5-7B-Instruct',
+    defaultVal: 'Qwen/Qwen2.5-7B-Instruct-GGUF',
     category: 'Models & Hardware',
-    desc: 'Default chat LLM dynamically loaded onto the Intel GPU (XPU) via IPEX-LLM at startup.'
+    desc: 'Default GGUF chat LLM loaded by llama-server.exe at startup.'
   },
   {
     key: 'EMBED_MODEL',
     defaultVal: 'BAAI/bge-base-en-v1.5',
     category: 'Models & Hardware',
-    desc: 'Default 768-dim embeddings model loaded onto the Intel NPU (OpenVINO).'
+    desc: 'Default 768-dim Hugging Face embeddings model.'
   },
   {
     key: 'LLM_DEVICE',
@@ -87,13 +87,13 @@ const KNOWN_ENV_VARIABLES: EnvVarDefinition[] = [
     desc: 'Toggles reasoning models hidden thinking process tokens.'
   },
   {
-    key: 'OV_HOST',
+    key: 'LLAMA_HOST',
     defaultVal: '0.0.0.0',
     category: 'Networking',
-    desc: 'Bind address for native OpenVINO FastAPI server (0.0.0.0 listens on LAN for coding agents & remote clients).'
+    desc: 'Bind address for native llama.cpp FastAPI server (0.0.0.0 listens on LAN for coding agents & remote clients).'
   },
   {
-    key: 'OV_PORT',
+    key: 'LLAMA_PORT',
     defaultVal: '11434',
     category: 'Networking',
     desc: 'Ollama- and OpenAI-compatible inference port.'
@@ -352,7 +352,7 @@ export const ConfigView: React.FC<ConfigViewProps> = ({ config, onUpdateConfig }
       qMsg = e?.message || 'Connection failed';
     }
 
-    // Test OpenVINO
+    // Test llama.cpp
     let ovOk = false;
     let ovMsg = '';
     try {
@@ -361,7 +361,7 @@ export const ConfigView: React.FC<ConfigViewProps> = ({ config, onUpdateConfig }
       }).catch(() => null);
 
       if (!res || !res.ok) {
-        res = await fetch('/api/ov/healthz', {
+        res = await fetch('/api/llama/healthz', {
           signal: AbortSignal.timeout(3000)
         }).catch(() => null);
       }
@@ -435,7 +435,7 @@ export const ConfigView: React.FC<ConfigViewProps> = ({ config, onUpdateConfig }
           </span>
         </div>
         <p className="text-xs text-slate-400">
-          The hub runs natively on Windows. Direct connections reach ports :11434 (OpenVINO / IPEX-LLM) and :6333 (Qdrant).
+          The hub runs natively on Windows. Direct connections reach ports :11434 (llama.cpp) and :6333 (Qdrant).
         </p>
         <div className="grid grid-cols-2 gap-2 pt-2">
           <button
@@ -462,7 +462,7 @@ export const ConfigView: React.FC<ConfigViewProps> = ({ config, onUpdateConfig }
           >
             <div className="font-bold text-xs">Live Local Endpoints</div>
             <div className="text-[11px] text-slate-400 mt-0.5">
-              Direct connection to :11434 (OpenVINO) and :6333 (Qdrant)
+              Direct connection to :11434 (llama.cpp) and :6333 (Qdrant)
             </div>
           </button>
         </div>
@@ -493,7 +493,7 @@ export const ConfigView: React.FC<ConfigViewProps> = ({ config, onUpdateConfig }
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
               <div>
-                <label className="block text-[11px] text-slate-400 mb-1">OpenVINO Inference Server URL</label>
+                <label className="block text-[11px] text-slate-400 mb-1">llama.cpp Inference Server URL</label>
                 <input
                   type="text"
                   value={config.inferenceUrl}
@@ -543,7 +543,7 @@ export const ConfigView: React.FC<ConfigViewProps> = ({ config, onUpdateConfig }
                       : 'bg-rose-950/80 border border-rose-600/60 text-rose-300'
                   }`}>
                     <span className={`w-1.5 h-1.5 rounded-full ${testResult.ovStatus?.ok ? 'bg-sky-400' : 'bg-rose-400'}`} />
-                    <span>OpenVINO: {testResult.ovStatus?.msg}</span>
+                    <span>llama.cpp: {testResult.ovStatus?.msg}</span>
                   </span>
                 </div>
               )}
@@ -716,7 +716,7 @@ export const ConfigView: React.FC<ConfigViewProps> = ({ config, onUpdateConfig }
         </div>
 
         <p className="text-xs text-slate-300 leading-relaxed">
-          The excerpt token allowance controls the maximum context size allocated to retrieved Qdrant articles when assembling the prompt for the OpenVINO LLM. Setting this allowance to <strong>20,000 tokens</strong> provides deep multi-document synthesis across dozens of full-length news reports.
+          The excerpt token allowance controls the maximum context size allocated to retrieved Qdrant articles when assembling the prompt for the llama.cpp LLM. Setting this allowance to <strong>20,000 tokens</strong> provides deep multi-document synthesis across dozens of full-length news reports.
         </p>
 
         {/* Quick UI Preset Switcher */}
@@ -813,7 +813,7 @@ MAX_NEW_TOKENS=2048`}
           <div className="flex items-start gap-2 text-amber-300/90 text-[11px] bg-amber-950/30 p-2.5 rounded-lg border border-amber-800/40">
             <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
             <span>
-              <strong>Architecture Note:</strong> If running 20K context with the 8B model, set <code className="text-amber-200">SWITCH_ALLOW_CPU=on</code> in <code className="text-amber-200">.env</code> so OpenVINO safely spills to system RAM, OR select <strong>Phi-3.5-mini-instruct</strong> for fast 20K context directly on the Intel GPU.
+              <strong>Architecture Note:</strong> If running 20K context with the 8B model, set <code className="text-amber-200">SWITCH_ALLOW_CPU=on</code> in <code className="text-amber-200">.env</code> so llama.cpp safely offloads to system RAM, OR select <strong>Phi-3.5-mini-instruct</strong> for fast 20K context directly on the Intel GPU.
             </span>
           </div>
         </div>
@@ -885,7 +885,7 @@ MAX_NEW_TOKENS=2048`}
           <span>Platform Guidelines & Windows Native Rules</span>
         </div>
         <p>
-          1. <strong>IPEX-LLM & OpenVINO do all inference:</strong> native Windows execution, no containers, no WSL, no Ollama, no llama.cpp.
+          1. <strong>llama.cpp does LLM inference:</strong> native Windows execution via llama-server.exe (GGUF) and Hugging Face embeddings, no containers, no WSL.
         </p>
         <p>
           2. <strong>Embedding dimension must match the Qdrant collection:</strong> 768 for the default <code>bge-base-en-v1.5</code>, 384 for <code>bge-small-en-v1.5</code>.

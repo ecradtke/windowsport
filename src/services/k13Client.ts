@@ -65,7 +65,7 @@ export class K13Client {
   }
 
   /**
-   * Helper to perform HTTP requests to OpenVINO with automatic Vite reverse-proxy fallback
+   * Helper to perform HTTP requests to llama.cpp server with automatic Vite reverse-proxy fallback
    */
   private async inferenceFetch(path: string, options?: RequestInit): Promise<Response> {
     const cleanPath = path.startsWith('/') ? path : `/${path}`;
@@ -78,11 +78,11 @@ export class K13Client {
         // Direct failed -> fall through to proxy
       }
     }
-    return await fetch(`/api/ov${cleanPath}`, options);
+    return await fetch(`/api/llama${cleanPath}`, options);
   }
 
   /**
-   * Fetch live server health and hardware status from OpenVINO server (:11434/healthz)
+   * Fetch live server health and hardware status from llama.cpp server (:11434/healthz)
    */
   public async fetchHealth(): Promise<{
     connected: boolean;
@@ -179,7 +179,7 @@ export class K13Client {
   }
 
   /**
-   * Generate real embedding from OpenVINO server
+   * Generate real embedding from llama.cpp server
    */
   public async generateEmbedding(text: string): Promise<number[] | null> {
     try {
@@ -404,7 +404,7 @@ export class K13Client {
   }
 
   /**
-   * Execute real chat stream via OpenVINO server (:11434/api/chat)
+   * Execute real chat stream via llama.cpp server (:11434/api/chat)
    */
   public async executeChatStream(
     userQuery: string,
@@ -470,7 +470,7 @@ export class K13Client {
       });
 
       if (!res.ok) {
-        throw new Error(`OpenVINO server returned HTTP ${res.status}: ${await res.text()}`);
+        throw new Error(`llama.cpp server returned HTTP ${res.status}: ${await res.text()}`);
       }
 
       if (res.body) {
@@ -510,8 +510,8 @@ export class K13Client {
       }
     } catch (err: any) {
       // If live chat failed, display clear error message with context summary
-      rawResponse = `⚠️ Connection to OpenVINO Inference Server (:11434) failed: ${err.message || err}.\n\n` +
-        `Ensure the OpenVINO service is active on your host (\`.\\scripts\\windows\\k13ctl.ps1 status\`).\n` +
+      rawResponse = `⚠️ Connection to llama.cpp Inference Server (:11434) failed: ${err.message || err}.\n\n` +
+        `Ensure the llama.cpp service is active on your host (\`.\\scripts\\windows\\k13ctl.ps1 status\`).\n` +
         (docs.length > 0 ? `\nRetrieved ${docs.length} excerpts from Qdrant successfully.` : '');
       onChunk(rawResponse, false);
     }
@@ -533,7 +533,7 @@ export class K13Client {
         in_tokens: inTokens,
         ttft_s: ttftSeconds,
         exact: Boolean(finalChunkMeta.eval_count),
-        device: `Intel ${this.config.llmHardware}`,
+        device: `llama.cpp (${this.config.llmHardware})`,
         stop: finalChunkMeta.done_reason || 'stop',
         thinking_chars: rawThinking.length
       },
@@ -564,7 +564,7 @@ export class K13Client {
   }
 
   /**
-   * Switch LLM model via OpenVINO server API
+   * Switch LLM model via llama.cpp server API
    */
   public async switchLlmModel(targetModelId: string): Promise<{ success: boolean; error?: string }> {
     this.switchStatus = { state: 'loading', model: targetModelId, stage: 'initiating' };
@@ -652,7 +652,7 @@ export class K13Client {
         }
       }
 
-      const timeoutMsg = 'Model switch reached the 60-minute safety ceiling. Check server logs: .\\scripts\\windows\\k13ctl.ps1 logs openvino.';
+      const timeoutMsg = 'Model switch reached the 60-minute safety ceiling. Check server logs: .\\scripts\\windows\\k13ctl.ps1 logs llama.';
       this.switchStatus = { state: 'error', model: this.config.currentLlmModel, error: timeoutMsg };
       return { success: false, error: timeoutMsg };
     } catch (e: any) {
@@ -662,7 +662,7 @@ export class K13Client {
   }
 
   /**
-   * Switch Embedding model via OpenVINO server API
+   * Switch Embedding model via llama.cpp server API
    */
   public async switchEmbedModel(targetModelId: string): Promise<{ success: boolean; error?: string }> {
     this.embedSwitchStatus = { state: 'loading', model: targetModelId, stage: 'initiating' };
@@ -830,7 +830,7 @@ export class K13Client {
   }
 
   /**
-   * Run live smoke test on OpenVINO hardware endpoints
+   * Run live smoke test on llama.cpp endpoints
    */
   public async runSmokeTest(): Promise<{
     embedSuccess: boolean;

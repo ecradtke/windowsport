@@ -61,7 +61,7 @@ export const ModelManagerView: React.FC<ModelManagerViewProps> = ({
         <div className="flex items-center justify-between mb-2">
           <h2 className="text-xl sm:text-2xl font-bold bg-gradient-to-r from-sky-400 via-indigo-300 to-purple-400 bg-clip-text text-transparent flex items-center gap-2">
             <Cpu className="w-6 h-6 text-sky-400" />
-            <span>Intel Hardware Accelerators & IPEX-LLM Engine</span>
+            <span>llama.cpp GGUF Engine & Hugging Face Model Switcher</span>
           </h2>
           {config.llmHardware === 'CPU' && (
             <button
@@ -69,50 +69,50 @@ export const ModelManagerView: React.FC<ModelManagerViewProps> = ({
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white text-xs font-semibold shadow-md transition"
             >
               <Zap className="w-3.5 h-3.5" />
-              <span>Force Reload on GPU (XPU)</span>
+              <span>Force Reload on GPU (-ngl 99)</span>
             </button>
           )}
         </div>
         <p className="text-sm text-slate-400">
-          Intel Extension for PyTorch (IPEX-LLM) runtime partition on Windows: Chat & reasoning LLMs accelerated on Intel Arc GPU / XPU (oneAPI Level Zero) with on-the-fly INT4 quantization, embeddings pinned to Intel NPU (OpenVINO).
+          Native Windows <code>llama.cpp</code> (<code>llama-server.exe</code>) runtime: Chat, coding & reasoning GGUF models offloaded to GPU with full Hugging Face GGUF repository support.
         </p>
       </div>
 
       {/* Hardware Status Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        {/* Intel GPU / XPU Card */}
+        {/* GPU / llama.cpp Card */}
         <div className="p-4 rounded-xl bg-slate-900/80 border border-slate-800 shadow-lg">
           <div className="flex items-center justify-between mb-2">
             <span className="text-xs uppercase font-bold tracking-wider text-slate-400">
-              Intel Arc GPU / XPU (Level Zero)
+              GPU Offload (llama-server.exe)
             </span>
             <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 shadow-[0_0_8px_#34d399]" />
           </div>
           <div className="text-lg font-bold text-slate-100">
-            {config.llmHardware === 'GPU' ? 'Active & Hosting IPEX-LLM' : 'Idle / CPU Active'}
+            {config.llmHardware === 'GPU' ? 'Active & Offloading GGUF' : 'CPU Mode Active'}
           </div>
           <div className="text-xs text-slate-400 mt-2 space-y-1 font-mono">
-            <p>VRAM Cap: ~6.8 GB (Lunar Lake)</p>
-            <p>Quantization: Dynamic INT4 on-the-fly</p>
-            <p>Pipeline: ipex-llm / XPU</p>
+            <p>Format: GGUF (Q4_K_M / Q5_K_M / Q8_0)</p>
+            <p>GPU Layers: -ngl 99</p>
+            <p>Engine: Native llama.cpp</p>
           </div>
         </div>
 
-        {/* Intel NPU Card */}
+        {/* Embeddings Card */}
         <div className="p-4 rounded-xl bg-slate-900/80 border border-slate-800 shadow-lg">
           <div className="flex items-center justify-between mb-2">
             <span className="text-xs uppercase font-bold tracking-wider text-slate-400">
-              Intel NPU (OpenVINO)
+              Vector Embeddings Engine
             </span>
             <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 shadow-[0_0_8px_#34d399]" />
           </div>
           <div className="text-lg font-bold text-slate-100">
-            {config.embedHardware === 'NPU' ? 'Active & Embedding' : 'CPU Fallback'}
+            Active & Indexing
           </div>
           <div className="text-xs text-slate-400 mt-2 space-y-1 font-mono">
             <p>Model: BGE Base (768 dims)</p>
-            <p>Shape: Static (1, 512)</p>
-            <p>Zero GPU/VRAM Interference</p>
+            <p>Max Sequence: 512 tokens</p>
+            <p>Zero LLM VRAM Interference</p>
           </div>
         </div>
 
@@ -124,7 +124,7 @@ export const ModelManagerView: React.FC<ModelManagerViewProps> = ({
             </span>
             <Layers className="w-4 h-4 text-purple-400" />
           </div>
-          <div className="text-lg font-bold text-slate-100">Windows Native IPEX-LLM</div>
+          <div className="text-lg font-bold text-slate-100">Windows Native llama.cpp</div>
           <div className="text-xs text-slate-400 mt-2 space-y-1">
             <label className="flex items-center gap-2 cursor-pointer mt-1">
               <input
@@ -133,10 +133,10 @@ export const ModelManagerView: React.FC<ModelManagerViewProps> = ({
                 onChange={e => onUpdateConfig({ switchAllowCpu: e.target.checked })}
                 className="rounded border-slate-700 bg-slate-950 text-indigo-600 focus:ring-0"
               />
-              <span className="text-slate-300 font-sans text-xs">Allow CPU fallback if model &gt; 6.8 GB</span>
+              <span className="text-slate-300 font-sans text-xs">Allow CPU fallback (-ngl 0) if GPU VRAM is full</span>
             </label>
             <p className="text-[11px] text-slate-500 font-sans">
-              (Rolls back to current model by default if GPU memory is insufficient)
+              (Automatically rolls back to previous GGUF if disabled)
             </p>
           </div>
         </div>
@@ -151,17 +151,13 @@ export const ModelManagerView: React.FC<ModelManagerViewProps> = ({
               <div className="font-semibold text-sm flex items-center flex-wrap gap-2">
                 <span>Switching to {switchState.model ? switchState.model.split('/').pop() : 'new model'}…</span>
                 <span className="text-[10px] px-2 py-0.5 rounded-full bg-indigo-900/90 text-sky-300 font-mono border border-indigo-700/60">
-                  Active Download (No Timeout)
+                  Active GGUF Load
                 </span>
               </div>
               <div className="text-xs text-indigo-300 mt-0.5">
                 {switchState.stage === 'downloading'
-                  ? 'Downloading Hugging Face repository shards — download will proceed until complete without timing out...'
-                  : switchState.stage === 'quantizing'
-                  ? 'Applying IPEX-LLM dynamic 4-bit INT4 quantization directly in memory...'
-                  : switchState.stage === 'compiling'
-                  ? 'Loading INT4 weights onto Intel Arc GPU (XPU)...'
-                  : 'Preparing Intel PyTorch XPU runtime...'}
+                  ? 'Downloading .gguf file from Hugging Face Hub into data\\models...'
+                  : 'Starting llama-server.exe and offloading GGUF layers to GPU...'}
               </div>
             </div>
           </div>
@@ -202,10 +198,10 @@ export const ModelManagerView: React.FC<ModelManagerViewProps> = ({
           <div>
             <h3 className="text-lg font-bold text-slate-100 flex items-center gap-2">
               <Zap className="w-5 h-5 text-indigo-400" />
-              <span>Curated IPEX-LLM Models (Intel Extension for PyTorch)</span>
+              <span>Curated Hugging Face GGUF Models (llama.cpp)</span>
             </h3>
             <p className="text-xs text-slate-400 mt-0.5">
-              Select from specialized models optimized with on-the-fly INT4 quantization directly on the Intel Arc GPU.
+              Select from curated GGUF models or enter any Hugging Face GGUF repository below.
             </p>
           </div>
           <span className="text-xs text-slate-400 self-end sm:self-auto font-mono">
@@ -280,14 +276,9 @@ export const ModelManagerView: React.FC<ModelManagerViewProps> = ({
                           Recommended
                         </span>
                       )}
-                      {model.requiresToken && (
-                        <span className="px-1.5 py-0.5 rounded text-[10px] bg-amber-950 text-amber-300 border border-amber-800/60" title="Requires HF_TOKEN in .env">
-                          Gated
-                        </span>
-                      )}
                       {model.heavy && (
-                        <span className="px-1.5 py-0.5 rounded text-[10px] bg-rose-950 text-rose-300 border border-rose-800/60" title="Requires SWITCH_ALLOW_CPU=on">
-                          Heavy (&gt;6.8GB)
+                        <span className="px-1.5 py-0.5 rounded text-[10px] bg-rose-950 text-rose-300 border border-rose-800/60">
+                          Large Model
                         </span>
                       )}
                     </div>
@@ -308,7 +299,7 @@ export const ModelManagerView: React.FC<ModelManagerViewProps> = ({
                   {isActive ? (
                     <span className="flex items-center gap-1.5 text-xs text-emerald-400 font-semibold">
                       <CheckCircle className="w-3.5 h-3.5" />
-                      Active on GPU (XPU)
+                      Active in llama.cpp
                     </span>
                   ) : (
                     <button
@@ -340,11 +331,11 @@ export const ModelManagerView: React.FC<ModelManagerViewProps> = ({
           <div className="flex flex-col sm:flex-row items-center gap-3">
             <div className="flex-1 w-full">
               <label className="block text-xs font-medium text-slate-300 mb-1">
-                Load Any Standard Hugging Face Model ID
+                Load Any Hugging Face GGUF Repository (or Local .gguf Path)
               </label>
               <input
                 type="text"
-                placeholder="e.g. deepseek-ai/DeepSeek-R1-Distill-Qwen-7B, Qwen/Qwen2.5-Coder-7B-Instruct, or mistralai/Mistral-7B-Instruct-v0.3"
+                placeholder="e.g. Qwen/Qwen3-8B-GGUF, bartowski/google_gemma-3-4b-it-GGUF:Q4_K_M, or C:\models\model.gguf"
                 value={customModelRepo}
                 onChange={e => setCustomModelRepo(e.target.value)}
                 className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-indigo-500"
@@ -355,14 +346,14 @@ export const ModelManagerView: React.FC<ModelManagerViewProps> = ({
               disabled={!customModelRepo.trim() || switchState.state === 'loading'}
               className="w-full sm:w-auto mt-auto sm:mt-5 px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-semibold transition shadow-md"
             >
-              Load via IPEX-LLM
+              Load in llama.cpp
             </button>
           </div>
 
           <div className="text-[11px] text-slate-400 bg-slate-950/50 p-2.5 rounded-lg border border-slate-800/80 flex items-start gap-2">
             <Info className="w-4 h-4 text-sky-400 flex-shrink-0 mt-0.5" />
             <span>
-              <strong>IPEX-LLM Advantage:</strong> You are no longer restricted to pre-converted OpenVINO IR files! IPEX-LLM downloads standard Hugging Face PyTorch repositories and applies <strong>dynamic 4-bit INT4 quantization directly in memory</strong> onto the Intel Arc GPU (XPU).
+              <strong>llama.cpp GGUF Support:</strong> Pass any Hugging Face GGUF repo (optionally with <code>:Q4_K_M</code> or <code>:Q5_K_M</code> suffix) or a local <code>.gguf</code> path. The server automatically downloads the best quantization and restarts <code>llama-server.exe</code>.
             </span>
           </div>
         </div>
@@ -375,10 +366,10 @@ export const ModelManagerView: React.FC<ModelManagerViewProps> = ({
         <div>
           <h3 className="text-lg font-bold text-slate-100 flex items-center gap-2">
             <Layers className="w-5 h-5 text-purple-400" />
-            <span>NPU Vector Embedding Models</span>
+            <span>Vector Embedding Models</span>
           </h3>
           <p className="text-xs text-slate-400 mt-1">
-            Running natively on the Intel NPU via OpenVINO. The default BGE Base produces 768-dimensional vectors aligned with the Qdrant index without consuming GPU VRAM.
+            The default BGE Base model produces 768-dimensional vectors aligned with the Qdrant index without consuming LLM context memory.
           </p>
         </div>
 
@@ -390,12 +381,9 @@ export const ModelManagerView: React.FC<ModelManagerViewProps> = ({
               <div>
                 <div className="font-semibold text-sm flex items-center flex-wrap gap-2">
                   <span>Switching Embedding Model to {embedSwitchState.model ? embedSwitchState.model.split('/').pop() : 'new model'}…</span>
-                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-purple-900/90 text-purple-300 font-mono border border-purple-700/60">
-                    Active Download (No Timeout)
-                  </span>
                 </div>
                 <div className="text-xs text-purple-300 mt-0.5">
-                  Downloading Hugging Face weights and compiling onto Intel NPU...
+                  Downloading Hugging Face embedding weights...
                 </div>
               </div>
             </div>
@@ -441,11 +429,11 @@ export const ModelManagerView: React.FC<ModelManagerViewProps> = ({
                 <div className="text-xs font-mono text-slate-400 mb-2">{em.id}</div>
                 <p className="text-xs text-slate-400 mb-3">{em.description}</p>
                 <div className="flex items-center justify-between pt-2 border-t border-slate-800">
-                  <span className="text-[11px] text-slate-500">Device: {em.device}</span>
+                  <span className="text-[11px] text-slate-500">Engine: {em.device}</span>
                   {isActive ? (
                     <span className="flex items-center gap-1.5 text-xs text-emerald-400 font-semibold">
                       <CheckCircle className="w-3.5 h-3.5" />
-                      Active on NPU
+                      Active
                     </span>
                   ) : (
                     <button

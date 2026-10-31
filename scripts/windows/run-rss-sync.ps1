@@ -34,10 +34,10 @@ function Load-DotEnv {
             }
         }
     }
-    $ovPort = if ($env:OV_PORT) { $env:OV_PORT } else { "11434" }
+    $llamaPort = if ($env:LLAMA_PORT) { $env:LLAMA_PORT } else { "11434" }
     $qPort = if ($env:QDRANT_PORT) { $env:QDRANT_PORT } else { "6333" }
-    $env:EMBEDDING_HOST = "http://127.0.0.1:$ovPort"
-    $env:OLLAMA_HOST = "http://127.0.0.1:$ovPort"
+    $env:EMBEDDING_HOST = "http://127.0.0.1:$llamaPort"
+    $env:OLLAMA_HOST = "http://127.0.0.1:$llamaPort"
     $env:QDRANT_HOST = "127.0.0.1"
     $env:QDRANT_PORT = $qPort
     $env:PYTHONUNBUFFERED = "1"

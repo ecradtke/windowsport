@@ -74,7 +74,7 @@ export const SidebarFilters: React.FC<SidebarFiltersProps> = ({
               onChange={e => onUpdateConfig({ inferenceUrl: e.target.value })}
               className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500 font-mono"
             />
-            <span className="text-[10px] text-slate-500">FastAPI OpenVINO server (:11434)</span>
+            <span className="text-[10px] text-slate-500">FastAPI llama.cpp server (:11434)</span>
           </div>
 
           <div>

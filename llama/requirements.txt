@@ -1,0 +1,11 @@
+fastapi>=0.100.0
+uvicorn>=0.23.0
+numpy
+huggingface_hub>=0.23.0
+requests
+pydantic
+torch
+transformers>=4.45.0
+sentencepiece
+protobuf
+

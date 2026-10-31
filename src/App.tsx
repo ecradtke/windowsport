@@ -22,7 +22,7 @@ const INITIAL_CONFIG: ClusterConfig = {
   qdrantUrl: `http://${defaultHost}:6333`,
   activeCollection: 'rss_articles',
   activeDbEngine: 'Qdrant (Local)',
-  currentLlmModel: (import.meta as any).env?.DEFAULT_MODEL || 'Qwen/Qwen2.5-7B-Instruct',
+  currentLlmModel: (import.meta as any).env?.DEFAULT_MODEL || 'Qwen/Qwen2.5-7B-Instruct-GGUF',
   currentEmbedModel: (import.meta as any).env?.EMBED_MODEL || 'BAAI/bge-base-en-v1.5',
   llmHardware: 'GPU',
   embedHardware: 'NPU',
@@ -156,7 +156,7 @@ export const App: React.FC = () => {
     }
   }, []);
 
-  // Query real Qdrant count & facets + OpenVINO health
+  // Query real Qdrant count & facets + llama.cpp health
   const refreshClusterData = useCallback(async () => {
     // 0. Fetch live environment variables from .env
     await fetchLiveEnv();
@@ -178,7 +178,7 @@ export const App: React.FC = () => {
       setGroupList(['(All Groups)', ...groups.sort()]);
     }
 
-    // 4. Fetch live OpenVINO health
+    // 4. Fetch live llama.cpp health
     const health = await client.fetchHealth();
     if (health.connected) {
       setConfig(prev => ({

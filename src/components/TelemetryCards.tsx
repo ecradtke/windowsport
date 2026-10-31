@@ -17,17 +17,17 @@ export const TelemetryCards: React.FC<TelemetryCardsProps> = ({ config, articleC
       {/* Metric 1: Inference Engine */}
       <div className="bg-slate-900/60 border border-slate-800/80 rounded-xl p-4 backdrop-blur-md hover:border-indigo-500/40 transition-all hover:-translate-y-0.5">
         <div className="flex items-center justify-between text-xs uppercase tracking-wider text-slate-400 font-semibold mb-2">
-          <span>Inference Engine (Intel)</span>
+          <span>Inference Engine</span>
           <Cpu className="w-4 h-4 text-sky-400" />
         </div>
         <div className="flex items-center gap-2">
           <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 shadow-[0_0_8px_#34d399]" />
           <span className="text-base sm:text-lg font-bold text-slate-100">
-            OpenVINO ({config.llmHardware} • {config.embedHardware})
+            llama.cpp ({config.llmHardware})
           </span>
         </div>
         <div className="text-[11px] text-slate-500 mt-1 font-mono">
-          GPU: LLM • NPU: BGE-Base 768d
+          LLM: GGUF • Embed: BGE-Base 768d
         </div>
       </div>
 
@@ -70,7 +70,7 @@ export const TelemetryCards: React.FC<TelemetryCardsProps> = ({ config, articleC
           {modelShortName}
         </div>
         <div className="text-[11px] text-slate-500 mt-1 font-mono truncate">
-          INT4 OpenVINO Pipeline
+          GGUF llama-server Pipeline
         </div>
       </div>
 
@@ -84,7 +84,7 @@ export const TelemetryCards: React.FC<TelemetryCardsProps> = ({ config, articleC
           Hybrid (Vector + URL)
         </div>
         <div className="text-[11px] text-slate-500 mt-1 font-mono">
-          NPU Embeddings + Exact Match
+          768d BGE Embeddings + Exact Match
         </div>
       </div>
     </div>

@@ -36,7 +36,7 @@ export const Header: React.FC<HeaderProps> = ({
                 </span>
               </div>
               <p className="text-xs text-slate-400 hidden sm:block">
-                Native IPEX-LLM & OpenVINO • Arc GPU LLM + NPU Embeddings
+                Native llama.cpp (GGUF) • GPU LLM + BGE Embeddings
               </p>
             </div>
           </div>
@@ -109,7 +109,7 @@ export const Header: React.FC<HeaderProps> = ({
             {config.llmHardware === 'CPU' ? (
               <button
                 onClick={onReloadGpu}
-                title="LLM is currently running on CPU fallback! Click to reload on Intel Arc GPU."
+                title="LLM is currently running on CPU fallback! Click to reload on GPU."
                 className="flex items-center gap-1.5 text-xs bg-amber-950/80 border border-amber-600/50 text-amber-300 px-2.5 py-1 rounded-md hover:bg-amber-900/60 transition"
               >
                 <Zap className="w-3.5 h-3.5 text-amber-400" />
@@ -119,7 +119,7 @@ export const Header: React.FC<HeaderProps> = ({
               <div className="flex items-center gap-2 text-xs bg-slate-900 border border-slate-800 px-3 py-1.5 rounded-lg text-slate-300">
                 <span className="w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_8px_#34d399]" />
                 <span className="font-mono text-[11px] text-slate-300">
-                  GPU: <strong className="text-sky-300">{config.llmHardware}</strong> • NPU: <strong className="text-purple-300">{config.embedHardware}</strong>
+                  LLM: <strong className="text-sky-300">{config.llmHardware}</strong> • Embed: <strong className="text-purple-300">{config.embedHardware}</strong>
                 </span>
               </div>
             )}

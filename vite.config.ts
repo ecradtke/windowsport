@@ -85,12 +85,12 @@ interface ServiceDefinition {
 
 const SYSTEM_SERVICES: ServiceDefinition[] = [
   {
-    id: 'openvino',
-    name: 'IPEX-LLM Inference Server',
-    unit: 'run-openvino.ps1',
-    role: 'FastAPI server hosting IPEX-LLM on Intel Arc GPU (XPU) and BGE embeddings on Intel NPU',
+    id: 'llama',
+    name: 'llama.cpp Inference Server',
+    unit: 'run-llama.ps1',
+    role: 'FastAPI server managing native llama-server.exe (GGUF LLMs on GPU) and Hugging Face BGE embeddings',
     port: 11434,
-    hardware: 'Intel Arc GPU (XPU) & Intel NPU',
+    hardware: 'GPU (llama.cpp) & CPU/GPU Embeddings',
     defaultMemory: 'GPU VRAM / System RAM',
     probeUrl: 'http://127.0.0.1:11434/healthz'
   },
@@ -108,7 +108,7 @@ const SYSTEM_SERVICES: ServiceDefinition[] = [
     id: 'web',
     name: 'K13 Web Portal',
     unit: 'run-web.ps1',
-    role: 'React web interface for vector intelligence, chat, telemetry & model switching',
+    role: 'React web interface for vector intelligence, chat, telemetry & GGUF model switching',
     port: 3000,
     hardware: 'Web Server',
     defaultMemory: 'Node.js Runtime',
@@ -118,10 +118,10 @@ const SYSTEM_SERVICES: ServiceDefinition[] = [
     id: 'rss',
     name: 'FreshRSS Vector Synchronizer',
     unit: 'run-rss-sync.ps1',
-    role: 'Scheduled background sync running every 5 min (FreshRSS NAS -> PostgreSQL -> NPU BGE -> Qdrant)',
+    role: 'Scheduled background sync running every 5 min (FreshRSS NAS -> PostgreSQL -> BGE -> Qdrant)',
     port: 'Every 5m',
-    hardware: 'Intel NPU',
-    defaultMemory: 'NPU Embeddings'
+    hardware: 'Embeddings Engine',
+    defaultMemory: 'BGE Embeddings'
   }
 ];
 
@@ -175,7 +175,6 @@ function servicesManagerPlugin(): Plugin {
         }
       } catch {
         if (status === 'active') {
-          // Process is alive (e.g. still loading LLM weights onto XPU)
           uptime = `Starting / Loading (${uptime})`;
         }
       }
@@ -258,7 +257,7 @@ function servicesManagerPlugin(): Plugin {
 
   const handleServicesLogs = async (req: any, res: any) => {
     const parsedUrl = url.parse(req.url, true);
-    const serviceId = (parsedUrl.query?.service as string) || 'openvino';
+    const serviceId = (parsedUrl.query?.service as string) || 'llama';
     const svc = SYSTEM_SERVICES.find(s => s.id === serviceId) || SYSTEM_SERVICES[0];
     const lines: string[] = [];
 
@@ -272,7 +271,7 @@ function servicesManagerPlugin(): Plugin {
           const content = fs.readFileSync(file, 'utf-8');
           const fileLines = content.split(/\r?\n/).filter(l => l.trim().length > 0);
           lines.push(...fileLines.slice(-100));
-        } catch { }
+        } catch {}
       }
     }
 
@@ -317,7 +316,7 @@ function servicesManagerPlugin(): Plugin {
           embedDims = vec.length;
         }
       }
-    } catch { }
+    } catch {}
 
     // Test 2: Chat LLM
     try {
@@ -332,7 +331,7 @@ function servicesManagerPlugin(): Plugin {
         chatResponse = (genData.response || '').trim() || 'ready (GPU online)';
         chatSuccess = true;
       }
-    } catch { }
+    } catch {}
 
     const totalSeconds = (performance.now() - t0) / 1000;
 
@@ -341,7 +340,7 @@ function servicesManagerPlugin(): Plugin {
       embedSuccess,
       embedDims,
       chatSuccess,
-      chatResponse: chatResponse || (chatSuccess ? 'ready' : 'OpenVINO server responding on 127.0.0.1:11434'),
+      chatResponse: chatResponse || (chatSuccess ? 'ready' : 'llama.cpp server responding on 127.0.0.1:11434'),
       durationSeconds: Number(totalSeconds.toFixed(2))
     }));
   };
@@ -392,10 +391,10 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api\/qdrant/, ''),
       },
-      '/api/ov': {
+      '/api/llama': {
         target: 'http://127.0.0.1:11434',
         changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api\/ov/, ''),
+        rewrite: (path) => path.replace(/^\/api\/llama/, ''),
       },
     },
   },
@@ -406,8 +405,8 @@ export default defineConfig({
     'TOP_',
     'DEFAULT_',
     'LLM_',
+    'LLAMA_',
     'EMBED_',
-    'OV_',
     'QDRANT_',
     'SWITCH_',
     'FRESHRSS_',

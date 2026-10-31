@@ -30,7 +30,7 @@ export const ServicesView: React.FC<ServicesViewProps> = ({
   onRunSmokeTest,
   onFetchLogs
 }) => {
-  const [selectedLogService, setSelectedLogService] = useState<string>('openvino');
+  const [selectedLogService, setSelectedLogService] = useState<string>('llama');
   const [liveLogs, setLiveLogs] = useState<string[]>([]);
   const [logsLoading, setLogsLoading] = useState<boolean>(false);
   const [autoRefreshLogs, setAutoRefreshLogs] = useState<boolean>(true);
