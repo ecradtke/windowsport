@@ -12,9 +12,9 @@ import { K13Client } from './services/k13Client';
 
 const defaultHost = typeof window !== 'undefined' && window.location.hostname ? window.location.hostname : '127.0.0.1';
 
-const envBudget = Number((import.meta as any).env?.RAG_CONTEXT_TOKEN_BUDGET || (import.meta as any).env?.VITE_RAG_CONTEXT_TOKEN_BUDGET) || 20000;
+const envBudget = Number((import.meta as any).env?.RAG_CONTEXT_TOKEN_BUDGET || (import.meta as any).env?.VITE_RAG_CONTEXT_TOKEN_BUDGET) || 4096;
 const envTopKMax = Number((import.meta as any).env?.TOP_K_MAX || (import.meta as any).env?.VITE_TOP_K_MAX) || 150;
-const envMaxNewTokens = Number((import.meta as any).env?.MAX_NEW_TOKENS || (import.meta as any).env?.VITE_MAX_NEW_TOKENS) || 2048;
+const envMaxNewTokens = Number((import.meta as any).env?.MAX_NEW_TOKENS || (import.meta as any).env?.VITE_MAX_NEW_TOKENS) || 1024;
 
 const INITIAL_CONFIG: ClusterConfig = {
   connectionMode: 'live',

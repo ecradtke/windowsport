@@ -362,11 +362,6 @@ function servicesManagerPlugin(): Plugin {
 
     try {
       const k13ctl = path.resolve(process.cwd(), 'scripts', 'windows', 'k13ctl.ps1');
-      const syncRunner = path.resolve(process.cwd(), 'scripts', 'windows', 'run-rss-sync.ps1');
-      if (fs.existsSync(syncRunner)) {
-        // Trigger a one-shot sync/rebuild in background and ensure rss service is started
-        exec(`powershell -NoProfile -ExecutionPolicy Bypass -File "${syncRunner}" -Once`);
-      }
       if (fs.existsSync(k13ctl)) {
         exec(`powershell -NoProfile -ExecutionPolicy Bypass -File "${k13ctl}" start rss`);
       }

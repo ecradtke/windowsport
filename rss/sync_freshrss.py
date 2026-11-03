@@ -741,6 +741,21 @@ def _cleanup_orphaned_qdrant_dir(err_text: str = ""):
                     shutil.rmtree(folder, ignore_errors=True)
 
 
+def _qdrant_low_mem_collection_config() -> Dict[str, Any]:
+    """Low-memory Qdrant collection configuration (mmap vectors, HNSW, and payloads on disk)."""
+    return {
+        "vectors": {"size": EMBED_DIMS, "distance": "Cosine", "on_disk": True},
+        "on_disk_payload": True,
+        "hnsw_config": {"on_disk": True},
+        "optimizers_config": {
+            "default_segment_number": 2,
+            "max_optimization_threads": 1,
+            "memmap_threshold": 10240,
+            "indexing_threshold": 20480,
+        },
+    }
+
+
 def qdrant_recreate_collection_rest() -> bool:
     """Create (or recreate) Qdrant collection and payload indexes via direct REST API."""
     base = QDRANT_URL.rstrip("/")
@@ -749,10 +764,11 @@ def qdrant_recreate_collection_rest() -> bool:
     except Exception:
         pass
 
-    logger.info(f"Creating Qdrant collection '{QDRANT_COLLECTION}' ({EMBED_DIMS} dims, Cosine)...")
+    col_cfg = _qdrant_low_mem_collection_config()
+    logger.info(f"Creating Qdrant collection '{QDRANT_COLLECTION}' ({EMBED_DIMS} dims, Cosine, on_disk=True)...")
     r = requests.put(
         f"{base}/collections/{QDRANT_COLLECTION}",
-        json={"vectors": {"size": EMBED_DIMS, "distance": "Cosine"}},
+        json=col_cfg,
         timeout=15,
     )
     if r.status_code not in (200, 201):
@@ -765,7 +781,7 @@ def qdrant_recreate_collection_rest() -> bool:
                 time.sleep(0.5)
                 r = requests.put(
                     f"{base}/collections/{QDRANT_COLLECTION}",
-                    json={"vectors": {"size": EMBED_DIMS, "distance": "Cosine"}},
+                    json=col_cfg,
                     timeout=15,
                 )
             else:
@@ -784,7 +800,7 @@ def qdrant_recreate_collection_rest() -> bool:
         except Exception as idx_err:
             logger.warning(f"Could not create payload index '{field}': {idx_err}")
 
-    logger.info(f"[✓] Created Qdrant collection '{QDRANT_COLLECTION}' with payload indexes.")
+    logger.info(f"[✓] Created Qdrant collection '{QDRANT_COLLECTION}' with on-disk vectors & payload indexes.")
     return True
 
 
