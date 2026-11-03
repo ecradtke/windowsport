@@ -82,6 +82,7 @@ qdrant_host = get_env_opt("QDRANT_HOST", default="127.0.0.1")
 qdrant_port = get_env_opt("QDRANT_PORT", default="6333")
 QDRANT_URL = get_env_opt("QDRANT_URL", default=f"http://{qdrant_host}:{qdrant_port}")
 QDRANT_COLLECTION = get_env_opt("QDRANT_COLLECTION", default="rss_articles")
+QDRANT_RETENTION_DAYS = int(get_env_opt("QDRANT_RETENTION_DAYS", default="30"))
 
 # Embeddings configuration
 llama_port = get_env_opt("LLAMA_PORT", default="11434")
@@ -827,6 +828,62 @@ def qdrant_upsert_rest(points: List[PointStruct]) -> bool:
     return True
 
 
+def qdrant_purge_old_points_rest(cutoff_ts: int) -> int:
+    """Purges points from Qdrant where published_at < cutoff_ts (older than QDRANT_RETENTION_DAYS)."""
+    base = QDRANT_URL.rstrip("/")
+    exists, _, before_count = qdrant_get_collection_status_rest()
+    if not exists or before_count == 0:
+        return 0
+
+    cutoff_str = datetime.datetime.fromtimestamp(cutoff_ts, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    try:
+        # Ensure integer payload index exists on published_at for fast range deletion
+        requests.put(
+            f"{base}/collections/{QDRANT_COLLECTION}/index?wait=true",
+            json={"field_name": "published_at", "field_schema": "integer"},
+            timeout=15,
+        )
+    except Exception:
+        pass
+
+    delete_payload = {
+        "filter": {
+            "must": [
+                {
+                    "key": "published_at",
+                    "range": {"lt": int(cutoff_ts)},
+                }
+            ]
+        }
+    }
+    try:
+        r = requests.post(
+            f"{base}/collections/{QDRANT_COLLECTION}/points/delete?wait=true",
+            json=delete_payload,
+            timeout=60,
+        )
+        if r.status_code not in (200, 201):
+            logger.warning(f"Qdrant purge request returned HTTP {r.status_code}: {r.text[:200]}")
+            return 0
+    except Exception as e:
+        logger.warning(f"Failed to purge old points from Qdrant: {e}")
+        return 0
+
+    _, _, after_count = qdrant_get_collection_status_rest()
+    purged = max(0, before_count - after_count)
+    if purged > 0:
+        logger.info(
+            f"[✓] Purged {purged:,} expired points older than {QDRANT_RETENTION_DAYS} days "
+            f"(< {cutoff_str}) from Qdrant '{QDRANT_COLLECTION}' (remaining: {after_count:,})."
+        )
+    else:
+        logger.info(
+            f"[✓] Qdrant '{QDRANT_COLLECTION}' retention check complete: 0 points older than "
+            f"{QDRANT_RETENTION_DAYS} days (< {cutoff_str})."
+        )
+    return purged
+
+
 def ensure_qdrant_collection(qdrant: Optional[QdrantClient] = None) -> bool:
     """Verifies Qdrant collection exists and matches EMBED_DIMS. Recreates if missing, failed, or mismatched."""
     needs_rebuild = False
@@ -836,20 +893,20 @@ def ensure_qdrant_collection(qdrant: Optional[QdrantClient] = None) -> bool:
         if vector_size != EMBED_DIMS:
             logger.warning(
                 f"Collection '{QDRANT_COLLECTION}' dimension mismatch ({vector_size} != {EMBED_DIMS}). "
-                "Recreating collection and triggering full embedding rebuild..."
+                "Recreating collection and triggering embedding rebuild..."
             )
             qdrant_recreate_collection_rest()
             needs_rebuild = True
         elif points_count == 0:
             logger.info(
                 f"Collection '{QDRANT_COLLECTION}' exists but has 0 points. "
-                "Triggering full embedding rebuild from PostgreSQL..."
+                f"Triggering {QDRANT_RETENTION_DAYS}-day embedding rebuild from PostgreSQL..."
             )
             needs_rebuild = True
     else:
         logger.info(
             f"Collection '{QDRANT_COLLECTION}' does not exist in Qdrant. "
-            "Creating collection and triggering full embedding rebuild..."
+            f"Creating collection and triggering {QDRANT_RETENTION_DAYS}-day embedding rebuild..."
         )
         qdrant_recreate_collection_rest()
         needs_rebuild = True
@@ -865,6 +922,13 @@ def main():
     logger.info("=" * 70)
     logger.info("Starting FreshRSS -> PostgreSQL -> BGE Embeddings -> Qdrant Sync")
     logger.info("=" * 70)
+
+    cutoff_ts = int(time.time()) - (QDRANT_RETENTION_DAYS * 86400)
+    cutoff_str = datetime.datetime.fromtimestamp(cutoff_ts, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    logger.info(
+        f"Retention policy: Qdrant keeps {QDRANT_RETENTION_DAYS} days (>= {cutoff_str}); "
+        "PostgreSQL keeps ALL historical data."
+    )
 
     # 1. Connect to Qdrant
     try:
@@ -889,14 +953,27 @@ def main():
                 conn.close()
                 conn = None
 
-    # 3. Check Qdrant collection status; recreate if needed
+    # 3. Check Qdrant collection status, purge items older than QDRANT_RETENTION_DAYS, recreate if needed
     needs_rebuild = ensure_qdrant_collection(qdrant)
+    if not needs_rebuild:
+        qdrant_purge_old_points_rest(cutoff_ts)
+        _, _, remaining_after_purge = qdrant_get_collection_status_rest()
+        if remaining_after_purge == 0:
+            needs_rebuild = True
+
     if needs_rebuild and conn and table_info:
         qualified = table_info["qualified"]
-        logger.info(f"Resetting vector_indexed=FALSE on PostgreSQL table {qualified} to trigger full re-embedding...")
+        pub_expr = table_info["pub_expr"]
+        logger.info(
+            f"Resetting vector_indexed=FALSE on PostgreSQL table {qualified} for articles "
+            f"from the last {QDRANT_RETENTION_DAYS} days (>= {cutoff_str})..."
+        )
         try:
             with conn.cursor() as cur:
-                cur.execute(f"UPDATE {qualified} SET vector_indexed = FALSE;")
+                cur.execute(
+                    f"UPDATE {qualified} SET vector_indexed = FALSE WHERE ({pub_expr}) >= %s;",
+                    (cutoff_ts,),
+                )
             conn.commit()
         except Exception as e:
             conn.rollback()
@@ -911,7 +988,7 @@ def main():
         csrf_token = get_freshrss_action_token(api_base, auth_token)
         unread_items = fetch_unread_freshrss_articles(api_base, auth_token, limit=200, max_pages=20)
 
-    # 5. Check PostgreSQL for existing records & export genuinely new articles
+    # 5. Check PostgreSQL for existing records & archive ALL new unread articles into PostgreSQL
     already_indexed_freshrss_ids: List[str] = []
     new_items_to_insert: List[Dict[str, Any]] = []
 
@@ -969,21 +1046,23 @@ def main():
         for it in unread_items:
             u = it.get("url") or ""
             f_id = str(it.get("freshrss_id") or it.get("id") or "")
+            item_pub = int(it.get("published_at") or time.time())
             if (u and u in indexed_urls) or (f_id and f_id in indexed_ids):
                 # Already stored and embedded in Qdrant! Queue for FreshRSS mark-as-read
                 already_indexed_freshrss_ids.append(it["freshrss_id"])
             elif (u and u in unindexed_urls) or (f_id and f_id in unindexed_ids):
-                # Already in PostgreSQL, will be embedded in Step 6
-                pass
+                # Already in PostgreSQL; if older than QDRANT_RETENTION_DAYS, mark read in FreshRSS
+                if item_pub < cutoff_ts:
+                    already_indexed_freshrss_ids.append(it["freshrss_id"])
             else:
                 new_items_to_insert.append(it)
 
         logger.info(
-            f"Unread analysis: {len(already_indexed_freshrss_ids)} already indexed in PostgreSQL/Qdrant (will be marked read), "
-            f"{len(new_items_to_insert)} new articles to insert."
+            f"Unread analysis: {len(already_indexed_freshrss_ids)} already archived/indexed (will be marked read), "
+            f"{len(new_items_to_insert)} new articles to archive in PostgreSQL."
         )
 
-        # Insert new articles
+        # Insert ALL new articles into PostgreSQL (PostgreSQL keeps all historical data)
         if new_items_to_insert:
             logger.info(f"Exporting {len(new_items_to_insert)} UNREAD articles to PostgreSQL table {qualified}...")
             inserted_count = 0
@@ -1027,16 +1106,16 @@ def main():
                     if table_info["group_col"] and table_info["group_col"] in cols:
                         col_dict[table_info["group_col"]] = it["group"]
                     # Convert published_at to appropriate data type (timestamptz vs bigint/int)
-                    if table_info["pub_col"] and table_info["pub_col"] in cols:
-                        pub_epoch = it.get("published_at") or int(time.time())
-                        if isinstance(pub_epoch, (int, float)):
-                            if pub_epoch > 100000000000:
-                                pub_epoch = pub_epoch / 1000.0
-                            if pub_epoch <= 0:
-                                pub_epoch = time.time()
-                        else:
+                    pub_epoch = it.get("published_at") or int(time.time())
+                    if isinstance(pub_epoch, (int, float)):
+                        if pub_epoch > 100000000000:
+                            pub_epoch = pub_epoch / 1000.0
+                        if pub_epoch <= 0:
                             pub_epoch = time.time()
+                    else:
+                        pub_epoch = time.time()
 
+                    if table_info["pub_col"] and table_info["pub_col"] in cols:
                         pub_dtype = table_info["col_types"].get(table_info["pub_col"], "")
                         if "timestamp" in pub_dtype or "date" in pub_dtype:
                             col_dict[table_info["pub_col"]] = datetime.datetime.fromtimestamp(pub_epoch, tz=timezone.utc)
@@ -1086,6 +1165,10 @@ def main():
                         cur.execute("RELEASE SAVEPOINT sp_insert_item;")
                         if cur.rowcount > 0:
                             inserted_count += 1
+                        # If article is older than QDRANT_RETENTION_DAYS, it stays in PostgreSQL
+                        # but won't be embedded into Qdrant, so mark it read in FreshRSS now.
+                        if int(pub_epoch) < cutoff_ts and it.get("freshrss_id"):
+                            already_indexed_freshrss_ids.append(it["freshrss_id"])
                     except Exception as e_ins:
                         cur.execute("ROLLBACK TO SAVEPOINT sp_insert_item;")
                         if error_log_count < 5:
@@ -1095,8 +1178,8 @@ def main():
                 conn.commit()
                 logger.info(f"[✓] Exported {inserted_count} new articles to PostgreSQL {qualified}.")
 
-    # 6. Fetch unindexed records from PostgreSQL, embed via local inference server,
-    #    upsert into Qdrant, and update vector_indexed=TRUE
+    # 6. Fetch unindexed records from PostgreSQL that are within QDRANT_RETENTION_DAYS (30 days),
+    #    embed via local NPU inference server, upsert into Qdrant, and update vector_indexed=TRUE
     total_embedded = 0
     newly_embedded_freshrss_ids: List[str] = []
 
@@ -1105,11 +1188,21 @@ def main():
         id_col = table_info["id_col"]
         id_is_int = table_info["id_is_int"]
         has_freshrss_col = table_info["freshrss_id_col"] is not None
+        pub_expr = table_info["pub_expr"]
 
         with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
-            cur.execute(f"SELECT COUNT(*) FROM {qualified} WHERE vector_indexed IS FALSE OR vector_indexed IS NULL;")
+            cur.execute(
+                f"SELECT COUNT(*) FROM {qualified} "
+                f"WHERE (vector_indexed IS FALSE OR vector_indexed IS NULL) AND ({pub_expr}) >= %s;",
+                (cutoff_ts,),
+            )
             total_unindexed = cur.fetchone()[0]
-            logger.info(f"Articles requiring embedding in PostgreSQL: {total_unindexed:,}")
+            cur.execute(f"SELECT COUNT(*) FROM {qualified};")
+            total_pg_rows = cur.fetchone()[0]
+            logger.info(
+                f"PostgreSQL archive total: {total_pg_rows:,} articles | "
+                f"Articles within last {QDRANT_RETENTION_DAYS} days requiring Qdrant embedding: {total_unindexed:,}"
+            )
 
             if total_unindexed > 0:
                 batch_size = 50
@@ -1130,7 +1223,9 @@ def main():
                         FROM {qualified} e
                         LEFT JOIN {table_info['feed_table']} f ON e.id_feed = f.id
                         LEFT JOIN {table_info['category_table'] or "f"} c ON f.category = c.id
-                        WHERE e.vector_indexed IS FALSE OR e.vector_indexed IS NULL
+                        WHERE (e.vector_indexed IS FALSE OR e.vector_indexed IS NULL)
+                          AND EXTRACT(EPOCH FROM COALESCE(e.date, CURRENT_TIMESTAMP))::bigint >= {cutoff_ts}
+                        ORDER BY published_at DESC
                         LIMIT {batch_size};
                     """
                 else:
@@ -1144,7 +1239,9 @@ def main():
                                {table_info['pub_expr']} AS published_at,
                                {table_info['content_expr']} AS text
                         FROM {qualified}
-                        WHERE vector_indexed IS FALSE OR vector_indexed IS NULL
+                        WHERE (vector_indexed IS FALSE OR vector_indexed IS NULL)
+                          AND ({pub_expr}) >= {cutoff_ts}
+                        ORDER BY published_at DESC
                         LIMIT {batch_size};
                     """
 
@@ -1215,11 +1312,21 @@ def main():
                         # Upsert to Qdrant collection (auto-recreating collection & resetting DB if missing)
                         was_existing = qdrant_upsert_rest(points_to_upsert)
                         if not was_existing:
-                            logger.warning(f"Resetting vector_indexed=FALSE on {qualified} for full embedding rebuild...")
+                            logger.warning(
+                                f"Resetting vector_indexed=FALSE on {qualified} (last {QDRANT_RETENTION_DAYS} days) "
+                                "for embedding rebuild..."
+                            )
                             with conn.cursor() as reset_cur:
-                                reset_cur.execute(f"UPDATE {qualified} SET vector_indexed = FALSE;")
+                                reset_cur.execute(
+                                    f"UPDATE {qualified} SET vector_indexed = FALSE WHERE ({pub_expr}) >= %s;",
+                                    (cutoff_ts,),
+                                )
                                 conn.commit()
-                                reset_cur.execute(f"SELECT COUNT(*) FROM {qualified};")
+                                reset_cur.execute(
+                                    f"SELECT COUNT(*) FROM {qualified} "
+                                    f"WHERE (vector_indexed IS FALSE OR vector_indexed IS NULL) AND ({pub_expr}) >= %s;",
+                                    (cutoff_ts,),
+                                )
                                 total_unindexed = reset_cur.fetchone()[0]
                                 processed = 0
 
@@ -1249,14 +1356,18 @@ def main():
 
     # 7. Fallback direct embedding if PostgreSQL was not available, but unread items exist
     _, _, current_points_count = qdrant_get_collection_status_rest()
-    if current_points_count == 0 and unread_items and total_embedded == 0:
-        logger.info(f"PostgreSQL empty or offline. Embedding {len(unread_items)} FreshRSS items directly into Qdrant...")
-        texts = [f"{it['title']}\n{it['text']}" for it in unread_items]
+    recent_unread = [it for it in unread_items if int(it.get("published_at") or time.time()) >= cutoff_ts]
+    if current_points_count == 0 and recent_unread and total_embedded == 0:
+        logger.info(
+            f"PostgreSQL empty or offline. Embedding {len(recent_unread)} FreshRSS items "
+            f"(within {QDRANT_RETENTION_DAYS} days) directly into Qdrant..."
+        )
+        texts = [f"{it['title']}\n{it['text']}" for it in recent_unread]
         vectors = get_embeddings_batch(texts)
         points = []
         direct_marked_ids = []
 
-        for it, vec in zip(unread_items, vectors):
+        for it, vec in zip(recent_unread, vectors):
             if vec and len(vec) == EMBED_DIMS:
                 pt_id = str(uuid.uuid5(uuid.NAMESPACE_URL, str(it["id"] or it["url"])))
                 points.append(PointStruct(id=pt_id, vector=vec, payload={
