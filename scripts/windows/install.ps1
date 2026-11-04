@@ -49,16 +49,8 @@ if ($pyLauncher) {
     }
 }
 
-$NodeCmd = Get-Command node.exe -ErrorAction SilentlyContinue
-if (-not $NodeCmd) {
-    Write-Host "[-] Node.js is not installed or not in PATH! Please install Node.js 18+ from nodejs.org." -ForegroundColor Red
-    exit 1
-}
-
 $pyVer = & $PythonExe --version 2>&1 | Out-String
-$nodeVer = & node.exe --version 2>&1 | Out-String
-Write-Host "[OK] Python: $($pyVer.Trim())" -ForegroundColor Green
-Write-Host "[OK] Node.js: $($nodeVer.Trim())" -ForegroundColor Green
+Write-Host "[OK] Python: $($pyVer.Trim()) (100% Python runtime - no Node.js required)" -ForegroundColor Green
 
 # 3. Create Directories
 $Dirs = @(
@@ -152,12 +144,8 @@ if (-not $SkipQdrant) {
     }
 }
 
-# 6. Install Node.js packages and build React portal
-if (-not $SkipNpm) {
-    Write-Host "`n[*] Installing React dependencies and building portal..." -ForegroundColor Yellow
-    npm install
-    npm run build
-}
+# 6. Verify Pure-Python Web Portal (web\server.py)
+Write-Host "`n[OK] Pure-Python Web Portal ready at .\web\server.py (Node.js/npm eliminated)." -ForegroundColor Green
 
 # 7. Hardware and llama.cpp Verification
 Write-Host "`n[*] Verifying llama.cpp and hardware stack on Windows..." -ForegroundColor Cyan

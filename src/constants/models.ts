@@ -226,13 +226,13 @@ export const DEFAULT_WINDOWS_SERVICES: SystemService[] = [
     id: 'web',
     name: 'K13 Web Portal',
     unit: 'run-web.ps1',
-    role: 'React web interface for vector intelligence, chat, telemetry & GGUF model switching',
+    role: 'Pure Python FastAPI web interface for vector intelligence, chat, telemetry & GGUF model switching',
     port: 3000,
     status: 'active',
     enabled: true,
     uptime: 'Running on :3000',
-    memory: 'Node.js Runtime',
-    hardware: 'Web Server'
+    memory: 'Python (.venv)',
+    hardware: 'Python FastAPI'
   },
   {
     id: 'rss',

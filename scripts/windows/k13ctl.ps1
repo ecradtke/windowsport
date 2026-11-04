@@ -101,19 +101,31 @@ function Stop-K13Service($svc) {
     $id = Get-ServicePid $svc
     if ($id) {
         Write-Host "[-] Stopping $svc (PID: $id)..." -ForegroundColor Yellow
-        # Terminate entire process tree on Windows so child llama-server/python/node/qdrant processes also stop cleanly
+        # Terminate entire process tree on Windows so child llama-server/python/qdrant processes also stop cleanly
         & taskkill.exe /PID $id /T /F 2>$null | Out-Null
         Stop-Process -Id $id -Force -ErrorAction SilentlyContinue
-        Remove-ServicePid $svc
+    }
+    switch ($svc) {
+        "qdrant" {
+            & taskkill.exe /IM qdrant.exe /T /F 2>$null | Out-Null
+            Stop-Process -Name "qdrant" -Force -ErrorAction SilentlyContinue
+        }
+        "llama"  {
+            & taskkill.exe /IM llama-server.exe /T /F 2>$null | Out-Null
+            Stop-Process -Name "llama-server" -Force -ErrorAction SilentlyContinue
+        }
+        "web"    {
+            # Terminate any legacy node.exe processes from earlier Vite runs
+            & taskkill.exe /IM node.exe /T /F 2>$null | Out-Null
+            Stop-Process -Name "node" -Force -ErrorAction SilentlyContinue
+        }
+        default {}
+    }
+    Remove-ServicePid $svc
+    if ($id) {
         Write-Host "[OK] $svc stopped." -ForegroundColor Green
     } else {
-        switch ($svc) {
-            "qdrant" { Stop-Process -Name "qdrant" -Force -ErrorAction SilentlyContinue }
-            "llama"  { Stop-Process -Name "llama-server" -Force -ErrorAction SilentlyContinue }
-            default {}
-        }
-        Remove-ServicePid $svc
-        Write-Host "[$svc] Not running or already stopped." -ForegroundColor DarkGray
+        Write-Host "[$svc] Stopped (cleaned up any background instances)." -ForegroundColor DarkGray
     }
 }
 
