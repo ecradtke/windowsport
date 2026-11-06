@@ -91,6 +91,12 @@ function Start-K13Service($svc) {
             Save-ServicePid "rss" $p.Id
             Write-Host "[OK] RSS Sync service started (PID: $($p.Id))" -ForegroundColor Green
         }
+        "backup" {
+            $runner = Join-Path $BaseDir "scripts\windows\run-backup.ps1"
+            $p = Start-Process powershell.exe -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$runner`"" -RedirectStandardOutput $logFile -RedirectStandardError (Join-Path $LogDir "backup_err.log") -PassThru -WindowStyle Hidden
+            Save-ServicePid "backup" $p.Id
+            Write-Host "[OK] Daily 4:00 AM Backup service started (PID: $($p.Id))" -ForegroundColor Green
+        }
         default {
             Write-Host "Unknown service: $svc" -ForegroundColor Red
         }
@@ -135,7 +141,7 @@ switch ($Command.ToLower()) {
         Write-Host "  K13 AI Hub - Windows Services Status (llama.cpp)        " -ForegroundColor Cyan
         Write-Host "==========================================================" -ForegroundColor Cyan
 
-        $services = @("qdrant", "llama", "web", "rss")
+        $services = @("qdrant", "llama", "web", "rss", "backup")
         foreach ($s in $services) {
             $pidVal = Get-ServicePid $s
             $stat = if ($pidVal) { "[ACTIVE] PID: $pidVal" } else { "[STOPPED]" }
@@ -178,6 +184,8 @@ switch ($Command.ToLower()) {
             Start-K13Service "web"
             Start-Sleep -Seconds 1
             Start-K13Service "rss"
+            Start-Sleep -Seconds 1
+            Start-K13Service "backup"
         } else {
             Start-K13Service $Target
         }
@@ -185,6 +193,7 @@ switch ($Command.ToLower()) {
 
     "stop" {
         if ($Target -eq "all") {
+            Stop-K13Service "backup"
             Stop-K13Service "rss"
             Stop-K13Service "web"
             Stop-K13Service "llama"
@@ -192,6 +201,11 @@ switch ($Command.ToLower()) {
         } else {
             Stop-K13Service $Target
         }
+    }
+
+    "backup-now" {
+        $runner = Join-Path $BaseDir "scripts\windows\run-backup.ps1"
+        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$runner" -Once
     }
 
     "restart" {

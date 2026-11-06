@@ -44,6 +44,7 @@ FRONTEND_ENV_PREFIXES = (
     "K13_",
     "WEB_",
     "DROPIT_",
+    "BACKUP_",
 )
 
 
@@ -125,6 +126,16 @@ SYSTEM_SERVICES = [
         "port": "Every 5m",
         "hardware": "Intel NPU Embeddings",
         "defaultMemory": "BGE Embeddings",
+        "probeUrl": None,
+    },
+    {
+        "id": "backup",
+        "name": "Qdrant & PostgreSQL Daily Backup",
+        "unit": "run-backup.ps1",
+        "role": "Automated 4:00 AM daily backup of Qdrant snapshots and PostgreSQL database into BACKUP_PATH",
+        "port": "4:00 AM",
+        "hardware": "Storage Archive",
+        "defaultMemory": "Python (.venv)",
         "probeUrl": None,
     },
 ]

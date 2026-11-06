@@ -245,5 +245,17 @@ export const DEFAULT_WINDOWS_SERVICES: SystemService[] = [
     uptime: 'Active Sync Loop',
     memory: 'BGE Embeddings',
     hardware: 'Embeddings Engine'
+  },
+  {
+    id: 'backup',
+    name: 'Qdrant & PostgreSQL Daily Backup',
+    unit: 'run-backup.ps1',
+    role: 'Automated 4:00 AM daily backup of Qdrant vector snapshots and PostgreSQL database into BACKUP_PATH',
+    port: '4:00 AM',
+    status: 'active',
+    enabled: true,
+    uptime: 'Scheduled 04:00 AM',
+    memory: 'Python (.venv)',
+    hardware: 'Storage Archive'
   }
 ];
