@@ -173,15 +173,15 @@ export const SidebarFilters: React.FC<SidebarFiltersProps> = ({
           <input
             type="range"
             min={2000}
-            max={Math.max(32000, config.ragContextTokenBudget)}
+            max={Math.max(128000, config.ragContextTokenBudget)}
             step={1000}
             value={config.ragContextTokenBudget}
-            onChange={e => onUpdateConfig({ ragContextTokenBudget: parseInt(e.target.value) || 20000 })}
+            onChange={e => onUpdateConfig({ ragContextTokenBudget: parseInt(e.target.value) || 32000 })}
             className="w-full accent-sky-500 h-1.5 bg-slate-800 rounded-lg cursor-pointer"
           />
           {/* Quick presets */}
           <div className="flex items-center gap-1.5">
-            {[4000, 8000, 16000, 20000, 32000].map(budget => (
+            {[8000, 16000, 32000, 64000, 128000].map(budget => (
               <button
                 key={budget}
                 type="button"
@@ -197,9 +197,9 @@ export const SidebarFilters: React.FC<SidebarFiltersProps> = ({
             ))}
           </div>
           <div className="text-[11px] text-slate-400">
-            {config.ragContextTokenBudget >= 20000 ? (
+            {config.ragContextTokenBudget >= 32000 ? (
               <span className="text-sky-300">
-                ⚡ 20K+ High Allowance: ~{((config.ragContextTokenBudget * 3.5) / 1000).toFixed(0)}KB context. High recall across dozens of articles.
+                ⚡ {(config.ragContextTokenBudget / 1000).toFixed(0)}K High Allowance: ~{((config.ragContextTokenBudget * 3.5) / 1000).toFixed(0)}KB context. Deep recall across dozens of articles.
               </span>
             ) : (
               <span>

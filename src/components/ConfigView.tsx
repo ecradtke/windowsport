@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+﻿import React, { useState, useEffect, useMemo } from 'react';
 import {
   Settings,
   Shield,
@@ -34,9 +34,9 @@ interface EnvVarDefinition {
 const KNOWN_ENV_VARIABLES: EnvVarDefinition[] = [
   {
     key: 'RAG_CONTEXT_TOKEN_BUDGET',
-    defaultVal: '20000',
+    defaultVal: '32000',
     category: 'RAG & Retrieval',
-    desc: 'Max token budget for retrieved Qdrant excerpts to assemble the LLM context prompt.'
+    desc: 'Max token budget for retrieved Qdrant excerpts to assemble the LLM context prompt (up to 128,000).'
   },
   {
     key: 'TOP_K_MAX',
@@ -440,11 +440,10 @@ export const ConfigView: React.FC<ConfigViewProps> = ({ config, onUpdateConfig }
         <div className="grid grid-cols-2 gap-2 pt-2">
           <button
             onClick={() => onUpdateConfig({ connectionMode: 'simulated' })}
-            className={`p-3 rounded-xl border text-left transition ${
-              config.connectionMode === 'simulated'
+            className={`p-3 rounded-xl border text-left transition ${config.connectionMode === 'simulated'
                 ? 'bg-indigo-600/30 border-indigo-500 text-indigo-100'
                 : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200'
-            }`}
+              }`}
           >
             <div className="font-bold text-xs">Simulated Intel Cluster</div>
             <div className="text-[11px] text-slate-400 mt-0.5">
@@ -454,11 +453,10 @@ export const ConfigView: React.FC<ConfigViewProps> = ({ config, onUpdateConfig }
 
           <button
             onClick={() => onUpdateConfig({ connectionMode: 'live' })}
-            className={`p-3 rounded-xl border text-left transition ${
-              config.connectionMode === 'live'
+            className={`p-3 rounded-xl border text-left transition ${config.connectionMode === 'live'
                 ? 'bg-indigo-600/30 border-indigo-500 text-indigo-100'
                 : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200'
-            }`}
+              }`}
           >
             <div className="font-bold text-xs">Live Local Endpoints</div>
             <div className="text-[11px] text-slate-400 mt-0.5">
@@ -528,20 +526,18 @@ export const ConfigView: React.FC<ConfigViewProps> = ({ config, onUpdateConfig }
 
               {testResult.tested && (
                 <div className="flex flex-wrap items-center gap-2 text-xs">
-                  <span className={`px-2.5 py-1 rounded-full font-mono flex items-center gap-1.5 ${
-                    testResult.qdrantStatus?.ok
+                  <span className={`px-2.5 py-1 rounded-full font-mono flex items-center gap-1.5 ${testResult.qdrantStatus?.ok
                       ? 'bg-emerald-950/80 border border-emerald-600/60 text-emerald-300'
                       : 'bg-rose-950/80 border border-rose-600/60 text-rose-300'
-                  }`}>
+                    }`}>
                     <span className={`w-1.5 h-1.5 rounded-full ${testResult.qdrantStatus?.ok ? 'bg-emerald-400' : 'bg-rose-400'}`} />
                     <span>Qdrant: {testResult.qdrantStatus?.msg}</span>
                   </span>
 
-                  <span className={`px-2.5 py-1 rounded-full font-mono flex items-center gap-1.5 ${
-                    testResult.ovStatus?.ok
+                  <span className={`px-2.5 py-1 rounded-full font-mono flex items-center gap-1.5 ${testResult.ovStatus?.ok
                       ? 'bg-sky-950/80 border border-sky-600/60 text-sky-300'
                       : 'bg-rose-950/80 border border-rose-600/60 text-rose-300'
-                  }`}>
+                    }`}>
                     <span className={`w-1.5 h-1.5 rounded-full ${testResult.ovStatus?.ok ? 'bg-sky-400' : 'bg-rose-400'}`} />
                     <span>llama.cpp: {testResult.ovStatus?.msg}</span>
                   </span>
@@ -605,11 +601,10 @@ export const ConfigView: React.FC<ConfigViewProps> = ({ config, onUpdateConfig }
                 key={cat}
                 type="button"
                 onClick={() => setSelectedCategory(cat)}
-                className={`px-2.5 py-1 rounded-lg text-[11px] font-medium whitespace-nowrap transition ${
-                  selectedCategory === cat
+                className={`px-2.5 py-1 rounded-lg text-[11px] font-medium whitespace-nowrap transition ${selectedCategory === cat
                     ? 'bg-sky-600/30 border border-sky-500 text-sky-200'
                     : 'bg-slate-950 border border-slate-800 text-slate-400 hover:text-slate-200'
-                }`}
+                  }`}
               >
                 {cat}
               </button>
@@ -646,9 +641,8 @@ export const ConfigView: React.FC<ConfigViewProps> = ({ config, onUpdateConfig }
                   return (
                     <tr
                       key={env.key}
-                      className={`hover:bg-slate-850/50 transition-colors ${
-                        isHighlighted ? 'bg-sky-950/20' : ''
-                      }`}
+                      className={`hover:bg-slate-850/50 transition-colors ${isHighlighted ? 'bg-sky-950/20' : ''
+                        }`}
                     >
                       <td className="p-2.5 font-bold">
                         <span className={isHighlighted ? 'text-amber-300 font-extrabold' : 'text-sky-300'}>
@@ -657,11 +651,10 @@ export const ConfigView: React.FC<ConfigViewProps> = ({ config, onUpdateConfig }
                       </td>
 
                       <td className="p-2.5 font-bold font-mono">
-                        <span className={`px-2 py-0.5 rounded ${
-                          isHighlighted
+                        <span className={`px-2 py-0.5 rounded ${isHighlighted
                             ? 'bg-indigo-950/90 text-indigo-200 border border-indigo-700/80 shadow-sm'
                             : 'text-indigo-300'
-                        }`}>
+                          }`}>
                           {env.val}
                         </span>
                       </td>
@@ -729,16 +722,15 @@ export const ConfigView: React.FC<ConfigViewProps> = ({ config, onUpdateConfig }
             <span className="font-mono text-indigo-300 font-semibold">{config.ragContextTokenBudget.toLocaleString()} tokens</span>
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
-            {[4000, 8000, 16000, 20000, 32000].map(budget => (
+            {[8000, 16000, 32000, 64000, 128000].map(budget => (
               <button
                 key={budget}
                 type="button"
                 onClick={() => onUpdateConfig({ ragContextTokenBudget: budget })}
-                className={`py-2 px-3 rounded-lg text-xs font-mono transition text-center ${
-                  config.ragContextTokenBudget === budget
+                className={`py-2 px-3 rounded-lg text-xs font-mono transition text-center ${config.ragContextTokenBudget === budget
                     ? 'bg-sky-600 text-white font-bold ring-2 ring-sky-400/50 shadow-lg'
                     : 'bg-slate-900 text-slate-300 hover:bg-slate-850 hover:text-white border border-slate-800'
-                }`}
+                  }`}
               >
                 <div className="text-sm font-bold">{budget / 1000}K</div>
                 <div className="text-[10px] opacity-75">{budget.toLocaleString()} tok</div>
@@ -757,7 +749,7 @@ export const ConfigView: React.FC<ConfigViewProps> = ({ config, onUpdateConfig }
             Edit your root <code>.env</code> file (following the single-line comment rule, no inline comments):
           </p>
           <pre className="p-3 rounded-lg bg-slate-900 border border-slate-800 font-mono text-[11px] text-sky-200 overflow-x-auto">
-{`# Max token budget for retrieved Qdrant excerpts
+            {`# Max token budget for retrieved Qdrant excerpts
 RAG_CONTEXT_TOKEN_BUDGET=20000
 
 # Recommended: allow up to 150 excerpts retrieval in the UI

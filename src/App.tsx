@@ -12,7 +12,7 @@ import { K13Client } from './services/k13Client';
 
 const defaultHost = typeof window !== 'undefined' && window.location.hostname ? window.location.hostname : '127.0.0.1';
 
-const envBudget = Number((import.meta as any).env?.RAG_CONTEXT_TOKEN_BUDGET || (import.meta as any).env?.VITE_RAG_CONTEXT_TOKEN_BUDGET) || 4096;
+const envBudget = Number((import.meta as any).env?.RAG_CONTEXT_TOKEN_BUDGET || (import.meta as any).env?.VITE_RAG_CONTEXT_TOKEN_BUDGET) || 32000;
 const envTopKMax = Number((import.meta as any).env?.TOP_K_MAX || (import.meta as any).env?.VITE_TOP_K_MAX) || 150;
 const envMaxNewTokens = Number((import.meta as any).env?.MAX_NEW_TOKENS || (import.meta as any).env?.VITE_MAX_NEW_TOKENS) || 1024;
 
@@ -54,6 +54,9 @@ export const App: React.FC = () => {
           if (parsed.qdrantUrl?.includes('127.0.0.1') || parsed.qdrantUrl?.includes('localhost')) {
             parsed.qdrantUrl = `http://${defaultHost}:6333`;
           }
+        }
+        if (parsed.ragContextTokenBudget === 4096 || parsed.ragContextTokenBudget === 20000 || !parsed.ragContextTokenBudget) {
+          parsed.ragContextTokenBudget = 32000;
         }
         return { ...INITIAL_CONFIG, ...parsed };
       } catch {
@@ -110,9 +113,9 @@ export const App: React.FC = () => {
               envSource: data.source || '.env'
             };
 
-            if (data.env.RAG_CONTEXT_TOKEN_BUDGET) {
+            if (data.env.RAG_CONTEXT_TOKEN_BUDGET && !(prev as any).userAdjustedBudget) {
               const b = parseInt(data.env.RAG_CONTEXT_TOKEN_BUDGET, 10);
-              if (!isNaN(b) && b > 0) {
+              if (!isNaN(b) && b > 0 && b !== 4096 && b !== 20000) {
                 updates.ragContextTokenBudget = b;
               }
             }
@@ -223,7 +226,11 @@ export const App: React.FC = () => {
   }, [activeTab, refreshServices]);
 
   const handleUpdateConfig = (newConfig: Partial<ClusterConfig>) => {
-    setConfig(prev => ({ ...prev, ...newConfig }));
+    setConfig(prev => ({
+      ...prev,
+      ...newConfig,
+      ...(newConfig.ragContextTokenBudget !== undefined ? { userAdjustedBudget: true } : {})
+    }));
   };
 
   const handleClearChat = () => {
