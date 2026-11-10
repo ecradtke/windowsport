@@ -305,13 +305,36 @@ def resolve_gguf_file(model_id: str) -> Tuple[str, str]:
     return repo_id, local_path
 
 
-def stop_llama_process():
-    """Stop the running llama-server.exe subprocess cleanly."""
+def _trim_windows_working_set():
+    """Run Python GC and ask Windows kernel to trim unused working-set pages."""
+    try:
+        import gc
+        gc.collect()
+        if os.name == "nt":
+            import ctypes
+            handle = ctypes.windll.kernel32.GetCurrentProcess()
+            ctypes.windll.kernel32.SetProcessWorkingSetSize(handle, -1, -1)
+    except Exception:
+        pass
+
+
+def stop_llama_process(wait_for_vram_release: bool = True):
+    """Stop the running llama-server.exe subprocess cleanly and wait for Windows WDDM to release GPU VRAM."""
     global llama_proc
+    had_running_proc = False
+
     if llama_proc is not None:
         try:
             if llama_proc.poll() is None:
-                logger.info(f"Stopping llama-server.exe subprocess (PID {llama_proc.pid})...")
+                had_running_proc = True
+                logger.info(f"Stopping llama-server.exe subprocess (PID {llama_proc.pid}) and clearing GPU/system memory...")
+                if os.name == "nt":
+                    subprocess.run(
+                        ["taskkill.exe", "/PID", str(llama_proc.pid), "/T", "/F"],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        timeout=10,
+                    )
                 llama_proc.terminate()
                 try:
                     llama_proc.wait(timeout=5)
@@ -321,6 +344,34 @@ def stop_llama_process():
             logger.warning(f"Error stopping llama-server.exe: {e}")
         finally:
             llama_proc = None
+
+    # Ensure no orphaned llama-server.exe process is still holding GPU VRAM or INTERNAL_LLAMA_PORT
+    if os.name == "nt":
+        try:
+            res = subprocess.run(
+                ["taskkill.exe", "/IM", "llama-server.exe", "/T", "/F"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if res.returncode == 0:
+                had_running_proc = True
+        except Exception:
+            pass
+
+    _trim_windows_working_set()
+
+    if wait_for_vram_release and had_running_proc:
+        # Wait until INTERNAL_LLAMA_PORT is closed and give Windows WDDM GPU driver 2s to reclaim VRAM buffers
+        health_url = f"http://127.0.0.1:{INTERNAL_LLAMA_PORT}/health"
+        for _ in range(10):
+            try:
+                requests.get(health_url, timeout=0.3)
+                time.sleep(0.3)
+            except Exception:
+                break
+        time.sleep(2.0)
+        logger.info("[✓] Previous model unloaded; GPU VRAM and system RAM cleared.")
 
 
 def stop_embed_process():
@@ -341,11 +392,11 @@ def stop_embed_process():
             embed_proc = None
 
 
-atexit.register(stop_llama_process)
+atexit.register(lambda: stop_llama_process(wait_for_vram_release=False))
 atexit.register(stop_embed_process)
 
 
-def start_llama_subprocess(gguf_path: str, ngl: int) -> subprocess.Popen:
+def start_llama_subprocess(gguf_path: str, ngl: int, ctx_size: Optional[int] = None) -> subprocess.Popen:
     """Spawn llama-server.exe and wait until its /health endpoint reports ok."""
     bin_path = find_llama_server_binary()
     if not bin_path:
@@ -354,6 +405,7 @@ def start_llama_subprocess(gguf_path: str, ngl: int) -> subprocess.Popen:
             "or set LLAMA_SERVER_BIN / LLAMA_CPP_DIR in your .env file."
         )
 
+    effective_ctx = ctx_size or LLAMA_CTX_SIZE
     bin_dir = os.path.dirname(os.path.abspath(bin_path))
     cmd = [
         bin_path,
@@ -361,7 +413,9 @@ def start_llama_subprocess(gguf_path: str, ngl: int) -> subprocess.Popen:
         "--host", "127.0.0.1",
         "--port", str(INTERNAL_LLAMA_PORT),
         "-ngl", str(ngl),
-        "-c", str(LLAMA_CTX_SIZE),
+        "-c", str(effective_ctx),
+        "-b", "2048",
+        "-ub", "512",
         "-np", "1",
     ]
 
@@ -418,45 +472,80 @@ def start_llama_subprocess(gguf_path: str, ngl: int) -> subprocess.Popen:
 
 
 def load_llm(model_id: str):
-    """Download/resolve GGUF model and start llama-server.exe with GPU offload."""
+    """Unload current model to free GPU/RAM, download/resolve new GGUF model, and start llama-server.exe."""
     global llama_proc, current_gguf_path, active_llm_device, current_llm_repo, model_switch_status
 
     with llm_lock:
-        logger.info(f"Loading LLM '{model_id}' via llama.cpp...")
+        logger.info(f"Switching LLM to '{model_id}' via llama.cpp...")
         old_repo = current_llm_repo
         old_gguf = current_gguf_path
         old_device = active_llm_device
 
         model_switch_status = {
             "state": "loading",
-            "stage": "downloading",
+            "stage": "unloading_previous",
             "model": model_id,
             "error": None,
             "start_time": time.time(),
         }
 
         try:
+            # 1. Always stop the running llama-server.exe FIRST so all GPU VRAM and RAM are freed before loading
+            stop_llama_process(wait_for_vram_release=True)
+
+            # 2. Resolve and download GGUF file if not cached locally
+            model_switch_status["stage"] = "downloading"
             resolved_repo, gguf_path = resolve_gguf_file(model_id)
             model_switch_status["stage"] = "compiling"
 
-            stop_llama_process()
+            # Ensure memory is clean right before spawning llama-server.exe
+            stop_llama_process(wait_for_vram_release=False)
 
             want_gpu = INFERENCE_DEVICE != "CPU" and LLAMA_NGL > 0
             target_ngl = LLAMA_NGL if want_gpu else 0
 
-            try:
-                proc = start_llama_subprocess(gguf_path, ngl=target_ngl)
-                llama_proc = proc
-                active_llm_device = "GPU" if target_ngl > 0 else "CPU"
-            except Exception as gpu_err:
-                if target_ngl > 0 and SWITCH_ALLOW_CPU:
-                    logger.warning(f"GPU offload (-ngl {target_ngl}) failed ({gpu_err}); retrying on CPU (-ngl 0)...")
-                    proc = start_llama_subprocess(gguf_path, ngl=0)
-                    llama_proc = proc
-                    active_llm_device = "CPU"
-                else:
-                    raise gpu_err
+            # Build progressive launch profiles so larger models (8B/12B/14B) automatically adjust
+            # KV cache context or use hybrid GPU+RAM layer offloading if full -ngl 99 exceeds GPU VRAM
+            launch_profiles: List[Tuple[int, int, str]] = []
+            if target_ngl > 0:
+                launch_profiles.append((target_ngl, LLAMA_CTX_SIZE, "GPU"))
+                if LLAMA_CTX_SIZE > 16384:
+                    launch_profiles.append((target_ngl, 16384, "GPU"))
+                if LLAMA_CTX_SIZE > 8192:
+                    launch_profiles.append((target_ngl, 8192, "GPU"))
+                # Hybrid GPU + system RAM offload profiles for 12B / 14B models
+                for hybrid_ngl in (32, 22, 12):
+                    if target_ngl > hybrid_ngl:
+                        launch_profiles.append((hybrid_ngl, min(LLAMA_CTX_SIZE, 8192), "GPU"))
+                if SWITCH_ALLOW_CPU:
+                    launch_profiles.append((0, min(LLAMA_CTX_SIZE, 8192), "CPU"))
+            else:
+                launch_profiles.append((0, LLAMA_CTX_SIZE, "CPU"))
 
+            last_err = None
+            loaded_proc = None
+            loaded_device = "GPU"
+
+            for idx, (try_ngl, try_ctx, dev_label) in enumerate(launch_profiles):
+                try:
+                    if idx > 0:
+                        logger.info(
+                            f"Retrying '{model_id}' with adjusted VRAM profile "
+                            f"(-ngl {try_ngl}, -c {try_ctx}, device={dev_label})..."
+                        )
+                        stop_llama_process(wait_for_vram_release=True)
+                    loaded_proc = start_llama_subprocess(gguf_path, ngl=try_ngl, ctx_size=try_ctx)
+                    loaded_device = dev_label
+                    break
+                except Exception as attempt_err:
+                    last_err = attempt_err
+                    logger.warning(f"Launch profile (-ngl {try_ngl}, -c {try_ctx}) failed: {attempt_err}")
+
+            if loaded_proc is None:
+                raise last_err or RuntimeError(f"All launch profiles failed for '{model_id}'")
+
+            llama_proc = loaded_proc
+            active_llm_device = loaded_device
             current_gguf_path = gguf_path
             current_llm_repo = model_id
             model_switch_status = {"state": "idle", "stage": "ready", "model": model_id, "error": None}
@@ -465,12 +554,13 @@ def load_llm(model_id: str):
         except Exception as e:
             err_msg = str(e)
             logger.error(f"Failed to load LLM '{model_id}': {err_msg}")
+            stop_llama_process(wait_for_vram_release=True)
             # Rollback to previous GGUF if available
             if old_gguf and os.path.isfile(old_gguf) and (llama_proc is None or llama_proc.poll() is not None):
                 try:
                     logger.info(f"Rolling back to previous model: {old_repo} ({old_gguf})")
                     ngl = LLAMA_NGL if old_device == "GPU" else 0
-                    llama_proc = start_llama_subprocess(old_gguf, ngl=ngl)
+                    llama_proc = start_llama_subprocess(old_gguf, ngl=ngl, ctx_size=min(LLAMA_CTX_SIZE, 8192))
                     current_gguf_path = old_gguf
                     current_llm_repo = old_repo
                     active_llm_device = old_device
