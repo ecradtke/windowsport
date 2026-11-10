@@ -1077,6 +1077,24 @@ def _shrink_payload_on_400(payload: Dict[str, Any], err_body: str) -> Dict[str, 
     return new_payload
 
 
+def _strip_thinking_text(text: str) -> str:
+    """Remove all reasoning/thinking blocks (<think>, <thought>, <|channel|>thought) from model output."""
+    if not text:
+        return ""
+    cleaned = re.sub(r"<think>[\s\S]*?</think>\s*", "", text, flags=re.IGNORECASE)
+    cleaned = re.sub(r"<thought>[\s\S]*?</thought>\s*", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"<\|channel\|>thought[\s\S]*?<\|channel\|>\s*", "", cleaned, flags=re.IGNORECASE)
+    if "</think>" in cleaned.lower():
+        cleaned = re.split(r"</think>\s*", cleaned, flags=re.IGNORECASE)[-1]
+    if "</thought>" in cleaned.lower():
+        cleaned = re.split(r"</thought>\s*", cleaned, flags=re.IGNORECASE)[-1]
+    # Remove any trailing unclosed thinking block
+    cleaned = re.sub(r"<think>[\s\S]*$", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"<thought>[\s\S]*$", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"<\|channel\|>thought[\s\S]*$", "", cleaned, flags=re.IGNORECASE)
+    return cleaned.lstrip()
+
+
 @app.post("/api/chat")
 async def chat_endpoint(req: ChatReq):
     _ensure_llama_ready()
@@ -1105,7 +1123,8 @@ async def chat_endpoint(req: ChatReq):
 
         loop = asyncio.get_event_loop()
         data = await loop.run_in_executor(None, _sync_call)
-        content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+        raw_content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+        content = _strip_thinking_text(raw_content)
         usage = data.get("usage", {})
         return {
             "model": current_llm_repo,
@@ -1143,7 +1162,8 @@ async def chat_endpoint(req: ChatReq):
                         try:
                             chunk = json.loads(data_str)
                             delta = chunk.get("choices", [{}])[0].get("delta", {})
-                            piece = delta.get("content") or delta.get("reasoning_content") or ""
+                            # Only emit final content tokens; never emit reasoning_content (thinking tokens)
+                            piece = delta.get("content") or ""
                             if piece:
                                 token_count += 1
                                 yield json.dumps({

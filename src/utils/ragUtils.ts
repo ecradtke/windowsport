@@ -116,49 +116,53 @@ export function getContextStats(
 }
 
 /**
- * Remove reasoning blocks (<think>...</think>) from model output
+ * Remove reasoning blocks (<think>...</think>, <thought>...</thought>, <|channel|>thought...<|channel|>) from model output
  */
 export function stripThinking(
   text: string,
   streaming: boolean = false
 ): { visibleText: string; thinking: boolean; rawThinking: string } {
-  let cleaned = text;
-  let rawThinking = '';
+  let cleaned = text || '';
 
-  const thinkClose = '</think>';
-  const thinkOpen = '<think>';
+  // 1. Remove completed thinking blocks (<think>...</think>, <thought>...</thought>, <|channel|>thought...<|channel|>)
+  cleaned = cleaned.replace(/<think>[\s\S]*?<\/think>\s*/gi, '');
+  cleaned = cleaned.replace(/<thought>[\s\S]*?<\/thought>\s*/gi, '');
+  cleaned = cleaned.replace(/<\|channel\|>thought[\s\S]*?<\|channel\|>\s*/gi, '');
 
-  // Capture finished thinking blocks
-  const blockMatch = text.match(/<think>([\s\S]*?)<\/think>/i);
-  if (blockMatch) {
-    rawThinking = blockMatch[1].trim();
-    cleaned = text.replace(/<think>[\s\S]*?<\/think>\s*/gi, '');
+  // 2. If a closing tag exists without an opening tag, discard everything before the closing tag
+  for (const closeTag of ['</think>', '</thought>']) {
+    if (cleaned.toLowerCase().includes(closeTag)) {
+      const parts = cleaned.split(new RegExp(closeTag, 'i'));
+      cleaned = parts[parts.length - 1] || '';
+    }
   }
 
-  // If tag started before text
-  if (cleaned.toLowerCase().includes(thinkClose) && !cleaned.toLowerCase().split(thinkClose)[0].includes(thinkOpen)) {
-    const parts = cleaned.split(new RegExp(thinkClose, 'i'));
-    cleaned = parts[1] || '';
-  }
-
+  // 3. Remove any trailing unclosed thinking block
   let thinking = false;
+  const openPatterns = ['<think>', '<thought>', '<|channel|>thought'];
   const lower = cleaned.toLowerCase();
-  const idx = lower.lastIndexOf(thinkOpen);
 
-  if (idx !== -1) {
-    rawThinking = (rawThinking ? rawThinking + '\n' : '') + cleaned.slice(idx + thinkOpen.length);
-    cleaned = cleaned.slice(0, idx);
-    thinking = true;
-  } else if (streaming) {
-    for (let n = thinkOpen.length - 1; n > 0; n--) {
-      if (lower.endsWith(thinkOpen.slice(0, n))) {
-        cleaned = cleaned.slice(0, -n);
-        break;
+  for (const openTag of openPatterns) {
+    const idx = lower.lastIndexOf(openTag);
+    if (idx !== -1) {
+      cleaned = cleaned.slice(0, idx);
+      thinking = true;
+      break;
+    }
+  }
+
+  if (!thinking && streaming) {
+    for (const openTag of openPatterns) {
+      for (let n = openTag.length - 1; n > 0; n--) {
+        if (lower.endsWith(openTag.slice(0, n))) {
+          cleaned = cleaned.slice(0, -n);
+          break;
+        }
       }
     }
   }
 
-  return { visibleText: cleaned.trimStart(), thinking, rawThinking };
+  return { visibleText: cleaned.trimStart(), thinking, rawThinking: '' };
 }
 
 /**

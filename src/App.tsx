@@ -274,7 +274,7 @@ export const App: React.FC = () => {
               m.id === assistantId
                 ? {
                     ...m,
-                    content: partialText || (thinking ? '💭 *Thinking…*' : 'Searching Qdrant vectors…'),
+                    content: partialText || 'Generating response…',
                     stats: stats || m.stats
                   }
                 : m

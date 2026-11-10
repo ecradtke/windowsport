@@ -528,8 +528,8 @@ export class K13Client {
               }
               if (chunk?.message?.content) {
                 rawResponse += chunk.message.content;
-                const { visibleText, thinking } = stripThinking(rawResponse, true);
-                onChunk(visibleText, thinking);
+                const { visibleText } = stripThinking(rawResponse, true);
+                onChunk(visibleText, false);
               }
             } catch {
               // ignore malformed chunk
@@ -578,17 +578,16 @@ export class K13Client {
       }
     };
 
-    onChunk(visibleText || rawResponse, false, stats);
+    onChunk(visibleText, false, stats);
 
     return {
       id: `msg-${Date.now()}`,
       role: 'assistant',
-      content: visibleText || rawResponse,
+      content: visibleText,
       sources: metas,
       query: userQuery,
       stats,
-      timestamp: new Date().toLocaleTimeString(),
-      thinking: rawThinking
+      timestamp: new Date().toLocaleTimeString()
     };
   }
 

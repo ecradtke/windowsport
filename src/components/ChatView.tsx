@@ -16,7 +16,7 @@ import {
   Info
 } from 'lucide-react';
 import { ChatMessage, QueryStats, SourceItem } from '../types';
-import { cleanUrl, answerToHtml } from '../utils/ragUtils';
+import { cleanUrl, answerToHtml, stripThinking } from '../utils/ragUtils';
 
 interface ChatViewProps {
   messages: ChatMessage[];
@@ -63,7 +63,8 @@ export const ChatView: React.FC<ChatViewProps> = ({
 
   const handleDownloadHtml = (msg: ChatMessage) => {
     const question = msg.query || 'Report';
-    const htmlContent = answerToHtml(question, msg.content, msg.sources, msg.stats);
+    const cleanAnswer = stripThinking(msg.content, false).visibleText;
+    const htmlContent = answerToHtml(question, cleanAnswer, msg.sources, msg.stats);
     const blob = new Blob([htmlContent], { type: 'text/html;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -248,34 +249,9 @@ export const ChatView: React.FC<ChatViewProps> = ({
                     </div>
                   )}
 
-                  {/* Thinking Section if reasoning model */}
-                  {!isUser && msg.thinking && (
-                    <div className="mb-3 rounded-lg border border-purple-500/30 bg-purple-950/20 overflow-hidden">
-                      <button
-                        onClick={() => toggleThinking(msg.id)}
-                        className="w-full flex items-center justify-between p-2.5 text-xs text-purple-300 hover:bg-purple-900/30 transition-colors"
-                      >
-                        <div className="flex items-center gap-1.5">
-                          <Brain className="w-3.5 h-3.5 text-purple-400" />
-                          <span>Hidden Reasoning ({msg.thinking.length} chars)</span>
-                        </div>
-                        {expandedThinking[msg.id] ? (
-                          <ChevronUp className="w-3.5 h-3.5" />
-                        ) : (
-                          <ChevronDown className="w-3.5 h-3.5" />
-                        )}
-                      </button>
-                      {expandedThinking[msg.id] && (
-                        <div className="p-3 pt-0 text-xs font-mono text-purple-200/80 whitespace-pre-wrap border-t border-purple-500/20">
-                          {msg.thinking}
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Main Content */}
+                  {/* Main Content (only final answer, never thinking tokens) */}
                   <div className="prose prose-invert max-w-none prose-sm leading-relaxed whitespace-pre-wrap">
-                    {msg.content}
+                    {isUser ? msg.content : stripThinking(msg.content, false).visibleText}
                   </div>
 
                   {/* Query Statistics Report (Assistant only) */}
