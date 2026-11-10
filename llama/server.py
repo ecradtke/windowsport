@@ -183,6 +183,11 @@ def resolve_gguf_file(model_id: str) -> Tuple[str, str]:
     """
     clean_id = model_id.strip()
 
+    # Strip common CLI/URL prefixes if pasted directly from Hugging Face
+    for prefix in ("ollama run ", "llama-server -hf ", "https://huggingface.co/", "http://huggingface.co/", "huggingface.co/", "hf.co/"):
+        if clean_id.lower().startswith(prefix):
+            clean_id = clean_id[len(prefix):].strip()
+
     # 1. Direct local .gguf file path
     if os.path.isfile(clean_id) and clean_id.lower().endswith(".gguf"):
         return clean_id, os.path.abspath(clean_id)
@@ -191,10 +196,11 @@ def resolve_gguf_file(model_id: str) -> Tuple[str, str]:
     if os.path.isfile(local_in_models) and local_in_models.lower().endswith(".gguf"):
         return clean_id, os.path.abspath(local_in_models)
 
-    # 2. Check optional :quant suffix (e.g. Qwen/Qwen3-8B-GGUF:Q4_K_M)
+    # 2. Check optional :quant suffix (e.g. bartowski/gemma-4-12B-it-GGUF:Q4_K_M)
     requested_quant = None
-    if ":" in clean_id and not os.path.drive.splitdrive(clean_id)[0]:
+    if ":" in clean_id and not os.path.splitdrive(clean_id)[0]:
         clean_id, requested_quant = clean_id.split(":", 1)
+        clean_id = clean_id.strip().rstrip("/")
         requested_quant = requested_quant.strip().lower()
 
     # 3. Map standard HF repo ID to known GGUF repo if needed
@@ -224,13 +230,18 @@ def resolve_gguf_file(model_id: str) -> Tuple[str, str]:
     # 4. If the repo didn't have .gguf files, search Hugging Face Hub for a matching GGUF repo
     if not gguf_files:
         base_name = repo_id.split("/")[-1]
+        clean_base = re.sub(r"(?i)-gguf$", "", base_name)
         candidates = [
-            f"{repo_id}-GGUF",
-            f"bartowski/{base_name}-GGUF",
-            f"unsloth/{base_name}-GGUF",
-            f"Qwen/{base_name}-GGUF",
+            f"{repo_id}-GGUF" if not repo_id.lower().endswith("-gguf") else repo_id,
+            f"bartowski/google_{clean_base}-GGUF",
+            f"bartowski/{clean_base}-GGUF",
+            f"unsloth/{clean_base}-GGUF",
+            f"ggml-org/{clean_base}-GGUF",
+            f"Qwen/{clean_base}-GGUF",
         ]
         for cand in candidates:
+            if cand.lower() == repo_id.lower():
+                continue
             try:
                 gguf_files = find_gguf_in_repo(cand)
                 if gguf_files:
@@ -242,8 +253,9 @@ def resolve_gguf_file(model_id: str) -> Tuple[str, str]:
 
     if not gguf_files:
         try:
-            search_term = f"{repo_id.split('/')[-1]} GGUF"
-            models = list(api.list_models(search=search_term, limit=5))
+            clean_base = re.sub(r"(?i)-gguf$", "", repo_id.split("/")[-1])
+            search_term = f"{clean_base} GGUF"
+            models = list(api.list_models(search=search_term, limit=10))
             for m in models:
                 if "gguf" in m.id.lower():
                     try:
